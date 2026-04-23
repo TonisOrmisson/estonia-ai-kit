@@ -289,10 +289,15 @@ func init() {
 			if err != nil {
 				return err
 			}
-			section, err := client.ReadKMDMain(declarationID)
+			exported, err := client.ExportKMDReport(declarationID, "main")
 			if err != nil {
 				return err
 			}
+			section, err := api.ParseKMDMainCSV(exported.Bytes)
+			if err != nil {
+				return err
+			}
+			section.DeclarationID = declarationID
 			return printJSON(section)
 		},
 	}
@@ -339,10 +344,15 @@ func init() {
 			if err != nil {
 				return err
 			}
-			rows, err := client.ReadKMDINFA(declarationID)
+			exported, err := client.ExportKMDReport(declarationID, "inf-a")
 			if err != nil {
 				return err
 			}
+			rows, err := api.ParseKMDINFACSV(exported.Bytes)
+			if err != nil {
+				return err
+			}
+			rows.DeclarationID = declarationID
 			return printJSON(rows)
 		},
 	}
@@ -411,10 +421,15 @@ func init() {
 			if err != nil {
 				return err
 			}
-			rows, err := client.ReadKMDINFB(declarationID)
+			exported, err := client.ExportKMDReport(declarationID, "inf-b")
 			if err != nil {
 				return err
 			}
+			rows, err := api.ParseKMDINFBCSV(exported.Bytes)
+			if err != nil {
+				return err
+			}
+			rows.DeclarationID = declarationID
 			return printJSON(rows)
 		},
 	}

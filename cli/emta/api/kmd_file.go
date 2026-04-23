@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/csv"
 	"fmt"
 	"io"
 	"net/http"
@@ -365,6 +366,130 @@ func (c *Client) RequestKMDGeneratedFile(declarationID, reportType string) ([]KM
 		return nil, err
 	}
 	return parseKMDGeneratedFiles(nextPage.HTML)
+}
+
+func (c *Client) ExportKMDReport(declarationID, reportType string) (*XMLExportResult, error) {
+	files, err := c.RequestKMDGeneratedFile(declarationID, reportType)
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range files {
+		if file.DownloadHref != "" {
+			page, err := c.OpenKMDGeneratedFilesPage(declarationID)
+			if err != nil {
+				return nil, err
+			}
+			return c.DownloadKMDGeneratedFile(page.PageURL, file.DownloadHref)
+		}
+	}
+	return nil, fmt.Errorf("no downloadable kmd file generated for %s", reportType)
+}
+
+func parseKMDCSVRows(data []byte) ([][]string, error) {
+	reader := csv.NewReader(strings.NewReader(string(data)))
+	reader.Comma = ';'
+	reader.FieldsPerRecord = -1
+	return reader.ReadAll()
+}
+
+func ParseKMDMainCSV(data []byte) (*KMDMainSection, error) {
+	rows, err := parseKMDCSVRows(data)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) < 3 {
+		return nil, fmt.Errorf("kmd main csv too short")
+	}
+	dataRow := rows[2]
+	get := func(i int) string {
+		if i >= 0 && i < len(dataRow) {
+			return strings.TrimSpace(dataRow[i])
+		}
+		return ""
+	}
+	return &KMDMainSection{
+		Fields: KMDMainFields{
+			TransactionsWithRate24: get(1),
+			TransactionsWithRate22: get(2),
+			TransactionsWithRate20: get(3),
+			TransactionsWithRate9:  get(4),
+			TransactionsWithRate5:  get(5),
+			TransactionsWithRate13: get(6),
+			TransactionsZeroVAT:    get(7),
+			EUSupplyInclGoods:      get(8),
+			EUSupplyGoods:          get(9),
+			ExportZeroVAT:          get(10),
+			SalePassengersReturn:   get(11),
+			InputVATTotal:          get(14),
+			ImportVAT:              get(15),
+			FixedAssetsVAT:         get(16),
+			CarsVAT:                get(17),
+			NumberOfCars:           get(18),
+			CarsPartialVAT:         get(19),
+			NumberOfCarsPartial:    get(20),
+			EUAcquisitionsTotal:    get(21),
+			EUAcquisitionsGoods:    get(22),
+			OtherGoodsTotal:        get(23),
+			ImmovablesAndMetal:     get(24),
+			ExemptSupply:           get(25),
+			SpecialArrangements:    get(26),
+			AdjustmentsPlus:        get(27),
+			AdjustmentsMinus:       get(28),
+		},
+		Computed: KMDMainComputed{
+			VATTotal:      get(12),
+			VATFromImport: get(13),
+			VATPayable:    get(29),
+			OverpaidVAT:   get(30),
+		},
+	}, nil
+}
+
+func ParseKMDINFACSV(data []byte) (*KMDINFARows, error) {
+	rows, err := parseKMDCSVRows(data)
+	if err != nil {
+		return nil, err
+	}
+	result := &KMDINFARows{}
+	for _, row := range rows[2:] {
+		if len(row) == 0 || strings.TrimSpace(row[0]) == "" {
+			continue
+		}
+		item := KMDINFARow{}
+		if len(row) > 1 { item.PartnerCode = strings.TrimSpace(row[1]) }
+		if len(row) > 2 { item.PartnerName = strings.TrimSpace(row[2]) }
+		if len(row) > 3 { item.InvoiceNumber = strings.TrimSpace(row[3]) }
+		if len(row) > 4 { item.InvoiceDate = strings.TrimSpace(row[4]) }
+		if len(row) > 5 { item.InvoiceSum = strings.TrimSpace(row[5]) }
+		if len(row) > 6 { item.TaxRate = strings.TrimSpace(row[6]) }
+		if len(row) > 8 { item.SumForRateInPeriod = strings.TrimSpace(row[8]) }
+		if len(row) > 9 && strings.TrimSpace(row[9]) != "" { item.CommentCodes = []string{strings.TrimSpace(row[9])} }
+		result.Rows = append(result.Rows, item)
+	}
+	return result, nil
+}
+
+func ParseKMDINFBCSV(data []byte) (*KMDINFBRows, error) {
+	rows, err := parseKMDCSVRows(data)
+	if err != nil {
+		return nil, err
+	}
+	result := &KMDINFBRows{}
+	for _, row := range rows[2:] {
+		if len(row) == 0 || strings.TrimSpace(row[0]) == "" {
+			continue
+		}
+		item := KMDINFBRow{}
+		if len(row) > 1 { item.PartnerCode = strings.TrimSpace(row[1]) }
+		if len(row) > 2 { item.PartnerName = strings.TrimSpace(row[2]) }
+		if len(row) > 3 { item.InvoiceNumber = strings.TrimSpace(row[3]) }
+		if len(row) > 4 { item.InvoiceDate = strings.TrimSpace(row[4]) }
+		if len(row) > 5 { item.InvoiceSumVAT = strings.TrimSpace(row[5]) }
+		if len(row) > 7 { item.VATInPeriod = strings.TrimSpace(row[7]) }
+		if len(row) > 8 && strings.TrimSpace(row[8]) != "" { item.CommentCodes = []string{strings.TrimSpace(row[8])} }
+		result.Rows = append(result.Rows, item)
+	}
+	return result, nil
 }
 
 func (c *Client) DownloadKMDGeneratedFile(pageURL, href string) (*XMLExportResult, error) {

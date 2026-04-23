@@ -17,6 +17,7 @@ func init() {
 	var year int
 	var month int
 	var submitConfirm bool
+	var deleteConfirm bool
 	var partnerCode string
 	var invoiceNumber string
 	var reportType string
@@ -71,6 +72,26 @@ func init() {
 	}
 	kmdSubmitCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Stable declaration id from kmd list")
 	kmdSubmitCmd.Flags().BoolVar(&submitConfirm, "confirm", false, "Actually submit the declaration")
+
+	kmdDeleteCmd := &cobra.Command{
+		Use:   "delete",
+		Short: "Delete an unsent KMD draft by declaration id",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if declarationID == "" {
+				return fmt.Errorf("--declaration-id is required")
+			}
+			if !deleteConfirm {
+				return fmt.Errorf("--confirm is required for delete")
+			}
+			client, err := loadEMTAClient()
+			if err != nil {
+				return err
+			}
+			return client.DeleteKMDDraft(declarationID)
+		},
+	}
+	kmdDeleteCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Stable declaration id from kmd list")
+	kmdDeleteCmd.Flags().BoolVar(&deleteConfirm, "confirm", false, "Actually delete the draft")
 
 	kmdFileImportCmd := &cobra.Command{
 		Use:   "import",
@@ -450,7 +471,7 @@ func init() {
 	infACmd.AddCommand(infAReadCmd, infAUpdateCmd, infADeleteCmd)
 	infBCmd.AddCommand(infBReadCmd, infBUpdateCmd, infBDeleteCmd)
 	kmdFileCmd.AddCommand(kmdFileImportCmd, kmdFileCreateCmd, kmdFileRequestCmd, kmdFileListCmd, kmdFileDownloadCmd)
-	kmdCmd.AddCommand(kmdListCmd, kmdSubmitCmd, kmdFileCmd, mainCmd, infACmd, infBCmd)
+	kmdCmd.AddCommand(kmdListCmd, kmdSubmitCmd, kmdDeleteCmd, kmdFileCmd, mainCmd, infACmd, infBCmd)
 	rootCmd.AddCommand(kmdCmd)
 }
 

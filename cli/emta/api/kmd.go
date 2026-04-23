@@ -21,6 +21,7 @@ type KMDListItem struct {
 	DeclarationID string `json:"declaration_id"`
 	ViewID        string `json:"view_id,omitempty"`
 	UpdateID      string `json:"update_id,omitempty"`
+	DeleteID      string `json:"delete_id,omitempty"`
 	SubmittedDate string `json:"submitted_date,omitempty"`
 	Year          int    `json:"year,omitempty"`
 	Month         int    `json:"month,omitempty"`
@@ -1146,6 +1147,11 @@ func parseKMDList(html string) ([]KMDListItem, error) {
 		if cells.Length() > 9 {
 			if edit, ok := cells.Eq(9).Find("a").Attr("href"); ok {
 				item.UpdateID = edit
+			}
+		}
+		if cells.Length() > 10 {
+			if del, ok := cells.Eq(10).Find("a").Attr("href"); ok {
+				item.DeleteID = del
 			}
 		}
 		item.DeclarationID = makeKMDStableID(item)

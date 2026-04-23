@@ -173,6 +173,16 @@ func findKMDDraftID(items []KMDListItem, year, month int) string {
 	return ""
 }
 
+func findKMDItem(items []KMDListItem, stableID string) *KMDListItem {
+	for _, item := range items {
+		if item.DeclarationID == stableID {
+			copy := item
+			return &copy
+		}
+	}
+	return nil
+}
+
 func (c *Client) openKMDFileUploadPage(declarationID string) (*kmdPage, error) {
 	page, err := c.openKMDDeclaration(declarationID)
 	if err != nil {
@@ -191,6 +201,66 @@ func (c *Client) openKMDFileUploadPage(declarationID string) (*kmdPage, error) {
 	values.Set(action.SubmitFieldName, action.SubmitValue)
 
 	return c.postKMDForm(resolveKMDURL(page.PageURL, action.FormAction), values)
+}
+
+func (c *Client) DeleteKMDDraft(declarationID string) error {
+	items, err := c.ListKMDDeclarations()
+	if err != nil {
+		return err
+	}
+	item := findKMDItem(items, declarationID)
+	if item == nil {
+		return fmt.Errorf("kmd declaration not found: %s", declarationID)
+	}
+	if item.DeleteID == "" {
+		return fmt.Errorf("kmd declaration has no delete action: %s", declarationID)
+	}
+
+	basePage, err := c.getKMDPage("/customer-kmd2/declarations?1")
+	if err != nil {
+		return err
+	}
+	confirmPage, err := c.getKMDPageWithReferer(resolveKMDURL(basePage.PageURL, item.DeleteID), basePage.PageURL)
+	if err != nil {
+		return err
+	}
+
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(confirmPage.HTML))
+	if err != nil {
+		return err
+	}
+	form := doc.Find(`form[action*="deleteForm"]`).First()
+	if form.Length() == 0 {
+		return fmt.Errorf("kmd delete confirmation form not found in %s", confirmPage.PageURL)
+	}
+	action, _ := form.Attr("action")
+	values := url.Values{}
+	form.Find(`input[type="hidden"]`).Each(func(_ int, sel *goquery.Selection) {
+		name, _ := sel.Attr("name")
+		value, _ := sel.Attr("value")
+		if name != "" {
+			values.Set(name, value)
+		}
+	})
+	values.Set("delete", "Jah")
+
+	req, err := http.NewRequest("POST", resolveKMDURL(confirmPage.PageURL, action), strings.NewReader(values.Encode()))
+	if err != nil {
+		return err
+	}
+	setKMDNavigationHeaders(req)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Referer", confirmPage.PageURL)
+	resp, err := c.session.Client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("kmd delete failed (%d): %s", resp.StatusCode, string(raw))
+	}
+	return nil
 }
 
 func (c *Client) ImportKMDFile(declarationID, fileName string, fileBytes []byte) (*XMLImportResult, error) {

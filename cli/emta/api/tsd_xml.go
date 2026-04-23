@@ -140,6 +140,17 @@ func findNewTSDDeclarationID(before, after []TSDDeclaration, year, month int) st
 	return ""
 }
 
+func findDraftTSDDeclarationID(items []TSDDeclaration, year, month int) string {
+	for _, item := range items {
+		itemYear, _ := strconv.Atoi(item.Year)
+		itemMonth, _ := strconv.Atoi(item.Month)
+		if itemYear == year && itemMonth == month && !strings.EqualFold(item.Status, "Esitatud") {
+			return item.DeclarationID
+		}
+	}
+	return ""
+}
+
 func (c *Client) CreateTSDDraftFromXML(year, month int, fileName string, xmlBytes []byte, withSums bool) (*XMLImportResult, error) {
 	if err := c.ensureSession(); err != nil {
 		return nil, err
@@ -182,6 +193,10 @@ func (c *Client) CreateTSDDraftFromXML(year, month int, fileName string, xmlByte
 	req.Body = io.NopCloser(multipartBody)
 	req.ContentLength = int64(multipartBody.Len())
 	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Accept", "application/json, text/javascript, */*; q=0.01")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	req.Header.Set("Origin", baseURL)
+	req.Header.Set("Referer", pageURL)
 	c.setAuthHeaders(req)
 
 	resp, err := c.session.Client.Do(req)
@@ -213,6 +228,9 @@ func (c *Client) CreateTSDDraftFromXML(year, month int, fileName string, xmlByte
 	}
 
 	declarationID := findNewTSDDeclarationID(beforeList.Declarations, afterList.Declarations, year, month)
+	if declarationID == "" {
+		declarationID = findDraftTSDDeclarationID(afterList.Declarations, year, month)
+	}
 	messages := []string{}
 	if strings.TrimSpace(importResp.Data) != "" {
 		messages = append(messages, importResp.Data)

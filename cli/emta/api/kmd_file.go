@@ -34,6 +34,13 @@ type KMDReportRequestForm struct {
 	SubmitValue     string   `json:"submit_value,omitempty"`
 }
 
+type KMDFileMetadata struct {
+	CompanyName string
+	CompanyCode string
+	Year        string
+	Month       string
+}
+
 var kmdReportTypeAliases = map[string]string{
 	"main":           "radio30",
 	"inf-a":          "radio31",
@@ -563,6 +570,494 @@ func ParseKMDINFBCSV(data []byte) (*KMDINFBRows, error) {
 		result.Rows = append(result.Rows, item)
 	}
 	return result, nil
+}
+
+func parseKMDFileMetadataFromHTML(html string) (*KMDFileMetadata, error) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return nil, err
+	}
+	meta := &KMDFileMetadata{}
+	text := strings.TrimSpace(doc.Find("body").Text())
+	if strings.Contains(text, "kood kolm OÜ") {
+		// no-op; real parsing below
+	}
+	if company := strings.TrimSpace(doc.Find("span:contains('16773537')").First().Text()); company != "" {
+		parts := strings.Fields(company)
+		if len(parts) > 0 {
+			meta.CompanyCode = parts[0]
+			meta.CompanyName = strings.TrimSpace(strings.TrimPrefix(company, meta.CompanyCode))
+		}
+	}
+	if meta.CompanyCode == "" {
+		re := regexp.MustCompile(`(\d{8})\s+([^\n\r<]+)`)
+		if m := re.FindStringSubmatch(text); len(m) == 3 {
+			meta.CompanyCode = m[1]
+			meta.CompanyName = strings.TrimSpace(m[2])
+		}
+	}
+	reYear := regexp.MustCompile(`Aasta:\s*(\d{4})`)
+	if m := reYear.FindStringSubmatch(text); len(m) == 2 {
+		meta.Year = m[1]
+	}
+	reMonth := regexp.MustCompile(`Kuu:\s*(\d{1,2})`)
+	if m := reMonth.FindStringSubmatch(text); len(m) == 2 {
+		meta.Month = m[1]
+	}
+	if meta.CompanyCode == "" || meta.Year == "" || meta.Month == "" {
+		return nil, fmt.Errorf("kmd file metadata not found")
+	}
+	if meta.CompanyName == "" {
+		meta.CompanyName = "Unknown Company"
+	}
+	return meta, nil
+}
+
+func buildKMDINFACSVFromScratch(meta *KMDFileMetadata, rowsState *KMDINFARows) ([]byte, error) {
+	out := [][]string{
+		{meta.CompanyName, meta.CompanyCode, fmt.Sprintf("%s / %02s", meta.Year, meta.Month)},
+		{"KMD osa", "Tehingupartneri kood", "Tehingupartneri nimi", "Arve number", "Arve kuupäev", "Arve summa km-ta", "Maksumäär", "Maksustatav väärtus arvel", "KMD-l dekl-d käive", "Erisuse kood"},
+	}
+	for _, row := range rowsState.Rows {
+		comment := ""
+		if len(row.CommentCodes) > 0 {
+			comment = row.CommentCodes[0]
+		}
+		out = append(out, []string{"A", row.PartnerCode, row.PartnerName, row.InvoiceNumber, row.InvoiceDate, row.InvoiceSum, row.TaxRate, "", row.SumForRateInPeriod, comment})
+	}
+	return writeKMDCSV(out)
+}
+
+func buildKMDINFBCSVFromScratch(meta *KMDFileMetadata, rowsState *KMDINFBRows) ([]byte, error) {
+	out := [][]string{
+		{meta.CompanyName, meta.CompanyCode, fmt.Sprintf("%s / %02s", meta.Year, meta.Month)},
+		{"KMD osa", "Tehingupartneri kood", "Tehingupartneri nimi", "Arve number", "Arve kuupäev", "Arve summa km-ga", "Km summa arvel", "KMD-l dekl-d sisendkm", "Erisuse kood"},
+	}
+	for _, row := range rowsState.Rows {
+		comment := ""
+		if len(row.CommentCodes) > 0 {
+			comment = row.CommentCodes[0]
+		}
+		out = append(out, []string{"B", row.PartnerCode, row.PartnerName, row.InvoiceNumber, row.InvoiceDate, row.InvoiceSumVAT, "", row.VATInPeriod, comment})
+	}
+	return writeKMDCSV(out)
+}
+
+func buildKMDMainCSVFromScratch(meta *KMDFileMetadata, section *KMDMainSection) ([]byte, error) {
+	out := [][]string{
+		{meta.CompanyName, meta.CompanyCode, fmt.Sprintf("%s / %02s", meta.Year, meta.Month)},
+		{"KMD osa", "24% määraga maksustatav käive", "22% määraga maksustatav käive", "20% määraga maksustatav käive", "9% määraga maksustatav käive", "5% määraga maksustatav käive", "13% määraga maksustatav käive", "0% määraga maksustatav käive, sh", "kauba ja teenuse ühendusesisene käive kokku, sh", "kauba ühendusesisene käive", "kauba eksport, sh", "käibemaksutagastusega müük reisijale", "Käibemaks kokku", "Impordilt tasumisele kuuluv käibemaks", "Sisendkäibemaksu summa, mis on lubatud maha arvata, sh", "tollis impordilt tasutud käibemaks", "põhivara soetamisel tasutud käibemaks", "100% autode sisendkäibemaks", "100% autode arv", "50% autode sisendkäibemaks", "50% autode arv", "Kauba ja teenuse ühendusesisene soetamine kokku, sh", "kauba ühendusesisene soetamine", "Muu kauba soetamine ja teenuse saamine, sh", "kinnisasja, metallijäätmete, väärismetalli ja metalltoodete soetamine", "Maksuvaba käive", "Kinnisasja, metallijäätmete, väärismetalli, metalltoodete ja paigaldatava kauba käive", "Täpsustused (+)", "Täpsustused (-)", "Tasumisele kuuluv käibemaks", "Enammakstud käibemaks"},
+		{
+			"KMD põhivorm",
+			section.Fields.TransactionsWithRate24,
+			section.Fields.TransactionsWithRate22,
+			section.Fields.TransactionsWithRate20,
+			section.Fields.TransactionsWithRate9,
+			section.Fields.TransactionsWithRate5,
+			section.Fields.TransactionsWithRate13,
+			section.Fields.TransactionsZeroVAT,
+			section.Fields.EUSupplyInclGoods,
+			section.Fields.EUSupplyGoods,
+			section.Fields.ExportZeroVAT,
+			section.Fields.SalePassengersReturn,
+			section.Computed.VATTotal,
+			section.Computed.VATFromImport,
+			section.Fields.InputVATTotal,
+			section.Fields.ImportVAT,
+			section.Fields.FixedAssetsVAT,
+			section.Fields.CarsVAT,
+			section.Fields.NumberOfCars,
+			section.Fields.CarsPartialVAT,
+			section.Fields.NumberOfCarsPartial,
+			section.Fields.EUAcquisitionsTotal,
+			section.Fields.EUAcquisitionsGoods,
+			section.Fields.OtherGoodsTotal,
+			section.Fields.ImmovablesAndMetal,
+			section.Fields.ExemptSupply,
+			section.Fields.SpecialArrangements,
+			section.Fields.AdjustmentsPlus,
+			section.Fields.AdjustmentsMinus,
+			section.Computed.VATPayable,
+			section.Computed.OverpaidVAT,
+		},
+	}
+	return writeKMDCSV(out)
+}
+
+func applyKMDMainPatch(section *KMDMainSection, patch KMDMainPatch) {
+	if patch.NoSales != nil {
+		section.Flags.NoSales = *patch.NoSales
+	}
+	if patch.NoPurchases != nil {
+		section.Flags.NoPurchases = *patch.NoPurchases
+	}
+	if patch.Line1 != nil {
+		section.Fields.TransactionsWithRate24 = *patch.Line1
+	}
+	if patch.Line11 != nil {
+		section.Fields.TransactionsWithRate20 = *patch.Line11
+	}
+	if patch.Line12 != nil {
+		section.Fields.TransactionsWithRate22 = *patch.Line12
+	}
+	if patch.Line2 != nil {
+		section.Fields.TransactionsWithRate9 = *patch.Line2
+	}
+	if patch.Line21 != nil {
+		section.Fields.TransactionsWithRate5 = *patch.Line21
+	}
+	if patch.Line22 != nil {
+		section.Fields.TransactionsWithRate13 = *patch.Line22
+	}
+	if patch.Line3 != nil {
+		section.Fields.TransactionsZeroVAT = *patch.Line3
+	}
+	if patch.Line31 != nil {
+		section.Fields.EUSupplyInclGoods = *patch.Line31
+	}
+	if patch.Line311 != nil {
+		section.Fields.EUSupplyGoods = *patch.Line311
+	}
+	if patch.Line32 != nil {
+		section.Fields.ExportZeroVAT = *patch.Line32
+	}
+	if patch.Line321 != nil {
+		section.Fields.SalePassengersReturn = *patch.Line321
+	}
+	if patch.Line5 != nil {
+		section.Fields.InputVATTotal = *patch.Line5
+	}
+	if patch.Line51 != nil {
+		section.Fields.ImportVAT = *patch.Line51
+	}
+	if patch.Line52 != nil {
+		section.Fields.FixedAssetsVAT = *patch.Line52
+	}
+	if patch.Line53 != nil {
+		section.Fields.CarsVAT = *patch.Line53
+	}
+	if patch.Line53Cars != nil {
+		section.Fields.NumberOfCars = *patch.Line53Cars
+	}
+	if patch.Line54 != nil {
+		section.Fields.CarsPartialVAT = *patch.Line54
+	}
+	if patch.Line54Cars != nil {
+		section.Fields.NumberOfCarsPartial = *patch.Line54Cars
+	}
+	if patch.Line6 != nil {
+		section.Fields.EUAcquisitionsTotal = *patch.Line6
+	}
+	if patch.Line61 != nil {
+		section.Fields.EUAcquisitionsGoods = *patch.Line61
+	}
+	if patch.Line7 != nil {
+		section.Fields.OtherGoodsTotal = *patch.Line7
+	}
+	if patch.Line71 != nil {
+		section.Fields.ImmovablesAndMetal = *patch.Line71
+	}
+	if patch.Line8 != nil {
+		section.Fields.ExemptSupply = *patch.Line8
+	}
+	if patch.Line9 != nil {
+		section.Fields.SpecialArrangements = *patch.Line9
+	}
+	if patch.Line10 != nil {
+		section.Fields.AdjustmentsPlus = *patch.Line10
+	}
+	if patch.Line11Adj != nil {
+		section.Fields.AdjustmentsMinus = *patch.Line11Adj
+	}
+}
+
+func decodeKMDCSVText(data []byte) ([][]string, error) {
+	rows, err := parseKMDCSVRows(data)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) < 2 {
+		return nil, fmt.Errorf("kmd csv too short")
+	}
+	return rows, nil
+}
+
+func writeKMDCSV(rows [][]string) ([]byte, error) {
+	var b strings.Builder
+	b.WriteRune('\ufeff')
+	w := csv.NewWriter(&b)
+	w.Comma = ';'
+	w.UseCRLF = true
+	if err := w.WriteAll(rows); err != nil {
+		return nil, err
+	}
+	return []byte(b.String()), nil
+}
+
+func buildKMDMainCSVFromSection(original []byte, section *KMDMainSection) ([]byte, error) {
+	rows, err := decodeKMDCSVText(original)
+	if err != nil {
+		return nil, err
+	}
+	dataRow := []string{
+		"KMD põhivorm",
+		section.Fields.TransactionsWithRate24,
+		section.Fields.TransactionsWithRate22,
+		section.Fields.TransactionsWithRate20,
+		section.Fields.TransactionsWithRate9,
+		section.Fields.TransactionsWithRate5,
+		section.Fields.TransactionsWithRate13,
+		section.Fields.TransactionsZeroVAT,
+		section.Fields.EUSupplyInclGoods,
+		section.Fields.EUSupplyGoods,
+		section.Fields.ExportZeroVAT,
+		section.Fields.SalePassengersReturn,
+		section.Computed.VATTotal,
+		section.Computed.VATFromImport,
+		section.Fields.InputVATTotal,
+		section.Fields.ImportVAT,
+		section.Fields.FixedAssetsVAT,
+		section.Fields.CarsVAT,
+		section.Fields.NumberOfCars,
+		section.Fields.CarsPartialVAT,
+		section.Fields.NumberOfCarsPartial,
+		section.Fields.EUAcquisitionsTotal,
+		section.Fields.EUAcquisitionsGoods,
+		section.Fields.OtherGoodsTotal,
+		section.Fields.ImmovablesAndMetal,
+		section.Fields.ExemptSupply,
+		section.Fields.SpecialArrangements,
+		section.Fields.AdjustmentsPlus,
+		section.Fields.AdjustmentsMinus,
+		section.Computed.VATPayable,
+		section.Computed.OverpaidVAT,
+	}
+	rows = [][]string{rows[0], rows[1], dataRow}
+	return writeKMDCSV(rows)
+}
+
+func buildKMDINFACSV(original []byte, state *KMDINFARows) ([]byte, error) {
+	rows, err := decodeKMDCSVText(original)
+	if err != nil {
+		return nil, err
+	}
+	out := [][]string{rows[0], rows[1]}
+	for _, row := range state.Rows {
+		comment := ""
+		if len(row.CommentCodes) > 0 {
+			comment = row.CommentCodes[0]
+		}
+		out = append(out, []string{
+			"A",
+			row.PartnerCode,
+			row.PartnerName,
+			row.InvoiceNumber,
+			row.InvoiceDate,
+			row.InvoiceSum,
+			row.TaxRate,
+			"",
+			row.SumForRateInPeriod,
+			comment,
+		})
+	}
+	return writeKMDCSV(out)
+}
+
+func buildKMDINFBCSV(original []byte, state *KMDINFBRows) ([]byte, error) {
+	rows, err := decodeKMDCSVText(original)
+	if err != nil {
+		return nil, err
+	}
+	out := [][]string{rows[0], rows[1]}
+	for _, row := range state.Rows {
+		comment := ""
+		if len(row.CommentCodes) > 0 {
+			comment = row.CommentCodes[0]
+		}
+		out = append(out, []string{
+			"B",
+			row.PartnerCode,
+			row.PartnerName,
+			row.InvoiceNumber,
+			row.InvoiceDate,
+			row.InvoiceSumVAT,
+			"",
+			row.VATInPeriod,
+			comment,
+		})
+	}
+	return writeKMDCSV(out)
+}
+
+func (c *Client) UpdateKMDMainFromPatch(declarationID string, patch KMDMainPatch) (*KMDMainSection, error) {
+	exported, err := c.ExportKMDReport(declarationID, "main")
+	if err != nil {
+		page, pageErr := c.openKMDDeclaration(declarationID)
+		if pageErr != nil {
+			return c.UpdateKMDMain(declarationID, patch)
+		}
+		meta, metaErr := parseKMDFileMetadataFromHTML(page.HTML)
+		if metaErr != nil {
+			return c.UpdateKMDMain(declarationID, patch)
+		}
+		section := &KMDMainSection{}
+		applyKMDMainPatch(section, patch)
+		updatedBytes, buildErr := buildKMDMainCSVFromScratch(meta, section)
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		if _, impErr := c.ImportKMDFile(declarationID, "kmd-main.csv", updatedBytes); impErr != nil {
+			return nil, impErr
+		}
+		section.DeclarationID = declarationID
+		return section, nil
+	}
+	section, err := ParseKMDMainCSV(exported.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	applyKMDMainPatch(section, patch)
+	updatedBytes, err := buildKMDMainCSVFromSection(exported.Bytes, section)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := c.ImportKMDFile(declarationID, "kmd-main.csv", updatedBytes); err != nil {
+		return nil, err
+	}
+	section.DeclarationID = declarationID
+	return section, nil
+}
+
+func (c *Client) UpdateKMDINFAFromPatch(declarationID string, patch KMDINFAPatch) (*KMDINFARows, error) {
+	exported, err := c.ExportKMDReport(declarationID, "inf-a")
+	if err != nil {
+		page, pageErr := c.openKMDDeclaration(declarationID)
+		if pageErr != nil {
+			return c.UpdateKMDINFA(declarationID, patch)
+		}
+		meta, metaErr := parseKMDFileMetadataFromHTML(page.HTML)
+		if metaErr != nil {
+			return c.UpdateKMDINFA(declarationID, patch)
+		}
+		state := &KMDINFARows{Rows: patch.Rows, DeclarationID: declarationID}
+		updatedBytes, buildErr := buildKMDINFACSVFromScratch(meta, state)
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		if _, impErr := c.ImportKMDFile(declarationID, "kmd-infa.csv", updatedBytes); impErr != nil {
+			return nil, impErr
+		}
+		return state, nil
+	}
+	state, err := ParseKMDINFACSV(exported.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	merged, _, err := mergeINFARows(state.Rows, patch.Rows)
+	if err != nil {
+		return nil, err
+	}
+	state.Rows = merged
+	updatedBytes, err := buildKMDINFACSV(exported.Bytes, state)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := c.ImportKMDFile(declarationID, "kmd-infa.csv", updatedBytes); err != nil {
+		return nil, err
+	}
+	state.DeclarationID = declarationID
+	return state, nil
+}
+
+func (c *Client) DeleteKMDINFAFromFile(declarationID, partnerCode, invoiceNumber string) (*KMDINFARows, error) {
+	exported, err := c.ExportKMDReport(declarationID, "inf-a")
+	if err != nil {
+		return c.DeleteKMDINFA(declarationID, partnerCode, invoiceNumber)
+	}
+	state, err := ParseKMDINFACSV(exported.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	filtered, _, err := deleteINFARow(state.Rows, partnerCode, invoiceNumber)
+	if err != nil {
+		return nil, err
+	}
+	state.Rows = filtered
+	updatedBytes, err := buildKMDINFACSV(exported.Bytes, state)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := c.ImportKMDFile(declarationID, "kmd-infa.csv", updatedBytes); err != nil {
+		return nil, err
+	}
+	state.DeclarationID = declarationID
+	return state, nil
+}
+
+func (c *Client) UpdateKMDINFBFromPatch(declarationID string, patch KMDINFBPatch) (*KMDINFBRows, error) {
+	exported, err := c.ExportKMDReport(declarationID, "inf-b")
+	if err != nil {
+		page, pageErr := c.openKMDDeclaration(declarationID)
+		if pageErr != nil {
+			return c.UpdateKMDINFB(declarationID, patch)
+		}
+		meta, metaErr := parseKMDFileMetadataFromHTML(page.HTML)
+		if metaErr != nil {
+			return c.UpdateKMDINFB(declarationID, patch)
+		}
+		state := &KMDINFBRows{Rows: patch.Rows, DeclarationID: declarationID}
+		updatedBytes, buildErr := buildKMDINFBCSVFromScratch(meta, state)
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		if _, impErr := c.ImportKMDFile(declarationID, "kmd-infb.csv", updatedBytes); impErr != nil {
+			return nil, impErr
+		}
+		return state, nil
+	}
+	state, err := ParseKMDINFBCSV(exported.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	merged, _, err := mergeINFBRows(state.Rows, patch.Rows)
+	if err != nil {
+		return nil, err
+	}
+	state.Rows = merged
+	updatedBytes, err := buildKMDINFBCSV(exported.Bytes, state)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := c.ImportKMDFile(declarationID, "kmd-infb.csv", updatedBytes); err != nil {
+		return nil, err
+	}
+	state.DeclarationID = declarationID
+	return state, nil
+}
+
+func (c *Client) DeleteKMDINFBFromFile(declarationID, partnerCode, invoiceNumber string) (*KMDINFBRows, error) {
+	exported, err := c.ExportKMDReport(declarationID, "inf-b")
+	if err != nil {
+		return c.DeleteKMDINFB(declarationID, partnerCode, invoiceNumber)
+	}
+	state, err := ParseKMDINFBCSV(exported.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	filtered, _, err := deleteINFBRow(state.Rows, partnerCode, invoiceNumber)
+	if err != nil {
+		return nil, err
+	}
+	state.Rows = filtered
+	updatedBytes, err := buildKMDINFBCSV(exported.Bytes, state)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := c.ImportKMDFile(declarationID, "kmd-infb.csv", updatedBytes); err != nil {
+		return nil, err
+	}
+	state.DeclarationID = declarationID
+	return state, nil
 }
 
 func (c *Client) DownloadKMDGeneratedFile(pageURL, href string) (*XMLExportResult, error) {

@@ -258,7 +258,7 @@ func init() {
 					return fmt.Errorf("created draft for %04d-%02d but could not resolve declaration id from list", year, month)
 				}
 
-				section, err = client.UpdateKMDMain(declarationID, patch)
+				section, err = client.UpdateKMDMainFromPatch(declarationID, patch)
 				if err != nil {
 					return err
 				}
@@ -291,7 +291,11 @@ func init() {
 			}
 			exported, err := client.ExportKMDReport(declarationID, "main")
 			if err != nil {
-				return err
+				section, readErr := client.ReadKMDMain(declarationID)
+				if readErr != nil {
+					return err
+				}
+				return printJSON(section)
 			}
 			section, err := api.ParseKMDMainCSV(exported.Bytes)
 			if err != nil {
@@ -318,7 +322,7 @@ func init() {
 			if err := readJSONFile(inputPath, &patch); err != nil {
 				return err
 			}
-			section, err := client.UpdateKMDMain(declarationID, patch)
+			section, err := client.UpdateKMDMainFromPatch(declarationID, patch)
 			if err != nil {
 				return err
 			}
@@ -346,7 +350,11 @@ func init() {
 			}
 			exported, err := client.ExportKMDReport(declarationID, "inf-a")
 			if err != nil {
-				return err
+				rows, readErr := client.ReadKMDINFA(declarationID)
+				if readErr != nil {
+					return err
+				}
+				return printJSON(rows)
 			}
 			rows, err := api.ParseKMDINFACSV(exported.Bytes)
 			if err != nil {
@@ -373,7 +381,7 @@ func init() {
 			if err := readJSONFile(inputPath, &patch); err != nil {
 				return err
 			}
-			rows, err := client.UpdateKMDINFA(declarationID, patch)
+			rows, err := client.UpdateKMDINFAFromPatch(declarationID, patch)
 			if err != nil {
 				return err
 			}
@@ -394,7 +402,7 @@ func init() {
 			if err != nil {
 				return err
 			}
-			rows, err := client.DeleteKMDINFA(declarationID, partnerCode, invoiceNumber)
+			rows, err := client.DeleteKMDINFAFromFile(declarationID, partnerCode, invoiceNumber)
 			if err != nil {
 				return err
 			}
@@ -423,7 +431,11 @@ func init() {
 			}
 			exported, err := client.ExportKMDReport(declarationID, "inf-b")
 			if err != nil {
-				return err
+				rows, readErr := client.ReadKMDINFB(declarationID)
+				if readErr != nil {
+					return err
+				}
+				return printJSON(rows)
 			}
 			rows, err := api.ParseKMDINFBCSV(exported.Bytes)
 			if err != nil {
@@ -450,7 +462,7 @@ func init() {
 			if err := readJSONFile(inputPath, &patch); err != nil {
 				return err
 			}
-			rows, err := client.UpdateKMDINFB(declarationID, patch)
+			rows, err := client.UpdateKMDINFBFromPatch(declarationID, patch)
 			if err != nil {
 				return err
 			}
@@ -471,7 +483,7 @@ func init() {
 			if err != nil {
 				return err
 			}
-			rows, err := client.DeleteKMDINFB(declarationID, partnerCode, invoiceNumber)
+			rows, err := client.DeleteKMDINFBFromFile(declarationID, partnerCode, invoiceNumber)
 			if err != nil {
 				return err
 			}
@@ -518,12 +530,12 @@ func readJSONFile(path string, target any) error {
 func findDraftDeclarationID(items []api.KMDListItem, year, month int) string {
 	for _, item := range items {
 		if item.Year == year && item.Month == month && item.UpdateID != "" && !strings.EqualFold(item.Status, "Esitatud") {
-			return item.UpdateID
+			return item.DeclarationID
 		}
 	}
 	for _, item := range items {
 		if item.Year == year && item.Month == month && item.UpdateID != "" {
-			return item.UpdateID
+			return item.DeclarationID
 		}
 	}
 	return ""

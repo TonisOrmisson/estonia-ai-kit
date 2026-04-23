@@ -233,7 +233,22 @@ func (c *Client) CreateKMDDraft(year, month int) (*KMDMainSection, error) {
 	}
 	section, err := parseKMDMainSection(current.HTML)
 	if err != nil {
-		return nil, err
+		items, listErr := c.ListKMDDeclarations()
+		if listErr != nil {
+			return nil, err
+		}
+		draftID := ""
+		for _, item := range items {
+			if item.Year == year && item.Month == month && item.UpdateID != "" && !strings.EqualFold(item.Status, "Esitatud") {
+				draftID = item.DeclarationID
+				break
+			}
+		}
+		return &KMDMainSection{
+			DeclarationID: draftID,
+			PageURL:       current.PageURL,
+			Status:        parseKMDStatus(current.HTML),
+		}, nil
 	}
 	section.PageURL = current.PageURL
 	return section, nil

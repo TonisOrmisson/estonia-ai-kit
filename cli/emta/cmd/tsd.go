@@ -21,6 +21,9 @@ func newTSDCommand() *cobra.Command {
 
 	tsdCmd.AddCommand(newTSDXMLCommand())
 
+	var submitDeclarationID string
+	var submitConfirm bool
+
 	var listYear string
 	tsdListCmd := &cobra.Command{
 		Use:   "list",
@@ -114,7 +117,33 @@ func newTSDCommand() *cobra.Command {
 		},
 	}
 
-	tsdCmd.AddCommand(tsdListCmd, tsdShowCmd)
+	submitCmd := &cobra.Command{
+		Use:   "submit",
+		Short: "Submit a TSD draft by declaration id",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if submitDeclarationID == "" {
+				return fmt.Errorf("--declaration-id is required")
+			}
+			if !submitConfirm {
+				return fmt.Errorf("--confirm is required for submit")
+			}
+
+			client, err := loadEMTAClient()
+			if err != nil {
+				return err
+			}
+
+			result, err := client.SubmitTSD(submitDeclarationID)
+			if err != nil {
+				return err
+			}
+			return printJSON(result)
+		},
+	}
+	submitCmd.Flags().StringVar(&submitDeclarationID, "declaration-id", "", "Stable declaration id from tsd list")
+	submitCmd.Flags().BoolVar(&submitConfirm, "confirm", false, "Actually submit the declaration")
+
+	tsdCmd.AddCommand(tsdListCmd, tsdShowCmd, submitCmd)
 	return tsdCmd
 }
 
@@ -126,6 +155,10 @@ func newTSDXMLCommand() *cobra.Command {
 
 	var declarationID string
 	var outputPath string
+	var inputPath string
+	var year int
+	var month int
+	var withSums bool
 
 	exportCmd := &cobra.Command{
 		Use:   "export",
@@ -159,6 +192,39 @@ func newTSDXMLCommand() *cobra.Command {
 	exportCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Stable declaration id from tsd list")
 	exportCmd.Flags().StringVar(&outputPath, "output", "", "Path to write XML file")
 
-	tsdXMLCmd.AddCommand(exportCmd)
+	importCmd := &cobra.Command{
+		Use:   "import",
+		Short: "Import TSD XML into a new draft",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if inputPath == "" {
+				return fmt.Errorf("--input is required")
+			}
+			if year == 0 || month == 0 {
+				return fmt.Errorf("--year and --month are required")
+			}
+
+			xmlBytes, err := os.ReadFile(inputPath)
+			if err != nil {
+				return err
+			}
+
+			client, err := loadEMTAClient()
+			if err != nil {
+				return err
+			}
+
+			result, err := client.CreateTSDDraftFromXML(year, month, filepath.Base(inputPath), xmlBytes, withSums)
+			if err != nil {
+				return err
+			}
+			return printJSON(result)
+		},
+	}
+	importCmd.Flags().StringVar(&inputPath, "input", "", "Path to XML input file")
+	importCmd.Flags().IntVar(&year, "year", 0, "Tax year")
+	importCmd.Flags().IntVar(&month, "month", 0, "Tax month (1-12)")
+	importCmd.Flags().BoolVar(&withSums, "with-sums", false, "Import appendix 1, appendix 2 and INF1 together with tax sums")
+
+	tsdXMLCmd.AddCommand(exportCmd, importCmd)
 	return tsdXMLCmd
 }

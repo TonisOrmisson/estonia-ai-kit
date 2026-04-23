@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stefanoamorelli/estonia-ai-kit/cli/emta/auth"
 )
 
@@ -117,6 +118,38 @@ func TestLoadSessionFallsBackToFileWhenKeyringFails(t *testing.T) {
 	}
 	if session.PrincipalID != 7 {
 		t.Fatalf("expected principal 7, got %d", session.PrincipalID)
+	}
+}
+
+func TestRootRegistersTSDSubcommands(t *testing.T) {
+	cmd := rootCmd
+
+	tsd, _, err := cmd.Find([]string{"tsd"})
+	if err != nil {
+		t.Fatalf("expected tsd command: %v", err)
+	}
+
+	subcommands := map[string]bool{}
+	for _, child := range tsd.Commands() {
+		subcommands[child.Name()] = true
+	}
+
+	for _, name := range []string{"list", "show"} {
+		if !subcommands[name] {
+			t.Fatalf("missing tsd subcommand %q", name)
+		}
+	}
+}
+
+func TestRootRegistersKMDCommand(t *testing.T) {
+	cmd := rootCmd
+
+	kmd, _, err := cmd.Find([]string{"kmd"})
+	if err != nil {
+		t.Fatalf("expected kmd command: %v", err)
+	}
+	if kmd == nil || kmd == (*cobra.Command)(nil) {
+		t.Fatal("expected kmd command to be registered")
 	}
 }
 

@@ -48,7 +48,7 @@ func TestParseTSDImportMessages(t *testing.T) {
 
 func TestParseTSDSubmitAction(t *testing.T) {
 	html := `
-	<form action="/tsd2/client/declaration/16570913/summary/modify/" id="SummaryForm">
+	<form action="/tsd2/client/declaration/12345678/summary/modify/" id="SummaryForm">
 	  <button type="button" id="summaryConfirmDeclaration" name="doConfirmation">Esita</button>
 	  <button type="button" id="summaryCheckDeclaration">Uuenda ja kontrolli</button>
 	  <input type="hidden" name="CSRFToken" value="token-1"/>
@@ -58,7 +58,7 @@ func TestParseTSDSubmitAction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if action.FormAction != "/tsd2/client/declaration/16570913/summary/modify/" {
+	if action.FormAction != "/tsd2/client/declaration/12345678/summary/modify/" {
 		t.Fatalf("unexpected form action: %q", action.FormAction)
 	}
 	if action.SubmitFieldName != "doConfirmation" {

@@ -1,13 +1,17 @@
 package api
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/csv"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -332,6 +336,13 @@ func (c *Client) OpenKMDGeneratedFilesPage(declarationID string) (*kmdPage, erro
 		return nil, err
 	}
 	href, ok := doc.Find(`a:contains("Genereeri fail")`).Attr("href")
+	if (!ok || href == "") && strings.Contains(page.HTML, "printReportLink") {
+		re := `href="([^"]*printReportLink[^"]*)"`
+		if m := regexp.MustCompile(re).FindStringSubmatch(page.HTML); len(m) == 2 {
+			href = m[1]
+			ok = true
+		}
+	}
 	if !ok || href == "" {
 		return nil, fmt.Errorf("kmd generate file link not found")
 	}
@@ -369,27 +380,89 @@ func (c *Client) RequestKMDGeneratedFile(declarationID, reportType string) ([]KM
 }
 
 func (c *Client) ExportKMDReport(declarationID, reportType string) (*XMLExportResult, error) {
-	files, err := c.RequestKMDGeneratedFile(declarationID, reportType)
+	page, err := c.OpenKMDGeneratedFilesPage(declarationID)
 	if err != nil {
 		return nil, err
 	}
-	for _, file := range files {
-		if file.DownloadHref != "" {
-			page, err := c.OpenKMDGeneratedFilesPage(declarationID)
-			if err != nil {
-				return nil, err
+	files, err := parseKMDGeneratedFiles(page.HTML)
+	if err != nil {
+		return nil, err
+	}
+
+	matchPart := map[string]string{
+		"main":          "KMD põhivorm",
+		"inf-a":         "KMD INF A osa",
+		"inf-a-summary": "KMD INF A osa koond",
+		"inf-b":         "KMD INF B osa",
+		"inf-b-summary": "KMD INF B osa koond",
+	}[reportType]
+
+	findDownload := func(rows []KMDGeneratedFile) string {
+		for _, file := range rows {
+			if file.Part == matchPart && file.DownloadHref != "" {
+				return file.DownloadHref
 			}
-			return c.DownloadKMDGeneratedFile(page.PageURL, file.DownloadHref)
+		}
+		return ""
+	}
+
+	if href := findDownload(files); href != "" {
+		return c.DownloadKMDGeneratedFile(page.PageURL, href)
+	}
+
+	if _, err := c.RequestKMDGeneratedFile(declarationID, reportType); err != nil {
+		return nil, err
+	}
+
+	for i := 0; i < 5; i++ {
+		time.Sleep(1500 * time.Millisecond)
+		page, err := c.OpenKMDGeneratedFilesPage(declarationID)
+		if err != nil {
+			return nil, err
+		}
+		rows, err := parseKMDGeneratedFiles(page.HTML)
+		if err != nil {
+			return nil, err
+		}
+		if href := findDownload(rows); href != "" {
+			return c.DownloadKMDGeneratedFile(page.PageURL, href)
 		}
 	}
 	return nil, fmt.Errorf("no downloadable kmd file generated for %s", reportType)
 }
 
 func parseKMDCSVRows(data []byte) ([][]string, error) {
-	reader := csv.NewReader(strings.NewReader(string(data)))
+	unzipped, err := extractSingleCSVFromZIP(data)
+	if err == nil {
+		data = unzipped
+	}
+	text := strings.TrimPrefix(string(data), "\ufeff")
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	reader := csv.NewReader(strings.NewReader(text))
 	reader.Comma = ';'
 	reader.FieldsPerRecord = -1
+	reader.LazyQuotes = true
 	return reader.ReadAll()
+}
+
+func extractSingleCSVFromZIP(data []byte) ([]byte, error) {
+	readerAt := bytes.NewReader(data)
+	zr, err := zip.NewReader(readerAt, int64(len(data)))
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range zr.File {
+		if strings.HasSuffix(strings.ToLower(file.Name), ".csv") {
+			rc, err := file.Open()
+			if err != nil {
+				return nil, err
+			}
+			defer rc.Close()
+			return io.ReadAll(rc)
+		}
+	}
+	return nil, fmt.Errorf("no csv file found in zip")
 }
 
 func ParseKMDMainCSV(data []byte) (*KMDMainSection, error) {

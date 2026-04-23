@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -17,13 +18,13 @@ import (
 )
 
 type KMDGeneratedFile struct {
-	Part          string `json:"part,omitempty"`
-	Status        string `json:"status,omitempty"`
-	RequestedAt   string `json:"requested_at,omitempty"`
-	GeneratedAt   string `json:"generated_at,omitempty"`
-	FileName      string `json:"file_name,omitempty"`
-	FileSize      string `json:"file_size,omitempty"`
-	DownloadHref  string `json:"download_href,omitempty"`
+	Part         string `json:"part,omitempty"`
+	Status       string `json:"status,omitempty"`
+	RequestedAt  string `json:"requested_at,omitempty"`
+	GeneratedAt  string `json:"generated_at,omitempty"`
+	FileName     string `json:"file_name,omitempty"`
+	FileSize     string `json:"file_size,omitempty"`
+	DownloadHref string `json:"download_href,omitempty"`
 }
 
 type KMDReportRequestForm struct {
@@ -42,12 +43,47 @@ type KMDFileMetadata struct {
 }
 
 var kmdReportTypeAliases = map[string]string{
-	"main":           "radio30",
-	"inf-a":          "radio31",
-	"inf-a-summary":  "radio32",
-	"inf-b":          "radio33",
-	"inf-b-summary":  "radio34",
-	"all":            "radio35",
+	"main":          "radio30",
+	"inf-a":         "radio31",
+	"inf-a-summary": "radio32",
+	"inf-b":         "radio33",
+	"inf-b-summary": "radio34",
+	"all":           "radio35",
+}
+
+func kmdCachePath(declarationID, reportType string) (string, error) {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(configDir, "emta-cli", "kmd-cache", sanitizeStableID(declarationID), reportType+".csv"), nil
+}
+
+func saveCachedKMDReport(declarationID, reportType string, data []byte) error {
+	path, err := kmdCachePath(declarationID, reportType)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
+func loadCachedKMDReport(declarationID, reportType string) ([]byte, error) {
+	path, err := kmdCachePath(declarationID, reportType)
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadFile(path)
+}
+
+func deleteCachedKMDReports(declarationID string) error {
+	path, err := kmdCachePath(declarationID, "main")
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(filepath.Dir(path))
 }
 
 func parseKMDFileUploadEntryForm(html string) (*XMLUploadAction, error) {
@@ -271,7 +307,7 @@ func (c *Client) DeleteKMDDraft(declarationID string) error {
 		raw, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("kmd delete failed (%d): %s", resp.StatusCode, string(raw))
 	}
-	return nil
+	return deleteCachedKMDReports(declarationID)
 }
 
 func (c *Client) ImportKMDFile(declarationID, fileName string, fileBytes []byte) (*XMLImportResult, error) {
@@ -329,7 +365,12 @@ func (c *Client) CreateKMDDraftFromFile(year, month int, fileName string, fileBy
 	if declarationID == "" {
 		return nil, fmt.Errorf("could not resolve created kmd draft for %04d-%02d", year, month)
 	}
-	return c.ImportKMDFile(declarationID, fileName, fileBytes)
+	result, err := c.ImportKMDFile(declarationID, fileName, fileBytes)
+	if err != nil {
+		return nil, err
+	}
+	_ = saveCachedKMDReport(declarationID, "main", fileBytes)
+	return result, nil
 }
 
 func (c *Client) OpenKMDGeneratedFilesPage(declarationID string) (*kmdPage, error) {
@@ -414,7 +455,12 @@ func (c *Client) ExportKMDReport(declarationID, reportType string) (*XMLExportRe
 	}
 
 	if href := findDownload(files); href != "" {
-		return c.DownloadKMDGeneratedFile(page.PageURL, href)
+		exported, err := c.DownloadKMDGeneratedFile(page.PageURL, href)
+		if err != nil {
+			return nil, err
+		}
+		_ = saveCachedKMDReport(declarationID, reportType, exported.Bytes)
+		return exported, nil
 	}
 
 	if _, err := c.RequestKMDGeneratedFile(declarationID, reportType); err != nil {
@@ -432,10 +478,66 @@ func (c *Client) ExportKMDReport(declarationID, reportType string) (*XMLExportRe
 			return nil, err
 		}
 		if href := findDownload(rows); href != "" {
-			return c.DownloadKMDGeneratedFile(page.PageURL, href)
+			exported, err := c.DownloadKMDGeneratedFile(page.PageURL, href)
+			if err != nil {
+				return nil, err
+			}
+			_ = saveCachedKMDReport(declarationID, reportType, exported.Bytes)
+			return exported, nil
 		}
 	}
 	return nil, fmt.Errorf("no downloadable kmd file generated for %s", reportType)
+}
+
+func (c *Client) ReadKMDMainFromFile(declarationID string) (*KMDMainSection, error) {
+	exported, err := c.ExportKMDReport(declarationID, "main")
+	if err != nil {
+		cached, cacheErr := loadCachedKMDReport(declarationID, "main")
+		if cacheErr != nil {
+			return nil, err
+		}
+		exported = &XMLExportResult{Bytes: cached}
+	}
+	section, err := ParseKMDMainCSV(exported.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	section.DeclarationID = declarationID
+	return section, nil
+}
+
+func (c *Client) ReadKMDINFAFromFile(declarationID string) (*KMDINFARows, error) {
+	exported, err := c.ExportKMDReport(declarationID, "inf-a")
+	if err != nil {
+		cached, cacheErr := loadCachedKMDReport(declarationID, "inf-a")
+		if cacheErr != nil {
+			return nil, err
+		}
+		exported = &XMLExportResult{Bytes: cached}
+	}
+	rows, err := ParseKMDINFACSV(exported.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	rows.DeclarationID = declarationID
+	return rows, nil
+}
+
+func (c *Client) ReadKMDINFBFromFile(declarationID string) (*KMDINFBRows, error) {
+	exported, err := c.ExportKMDReport(declarationID, "inf-b")
+	if err != nil {
+		cached, cacheErr := loadCachedKMDReport(declarationID, "inf-b")
+		if cacheErr != nil {
+			return nil, err
+		}
+		exported = &XMLExportResult{Bytes: cached}
+	}
+	rows, err := ParseKMDINFBCSV(exported.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	rows.DeclarationID = declarationID
+	return rows, nil
 }
 
 func parseKMDCSVRows(data []byte) ([][]string, error) {
@@ -536,14 +638,30 @@ func ParseKMDINFACSV(data []byte) (*KMDINFARows, error) {
 			continue
 		}
 		item := KMDINFARow{}
-		if len(row) > 1 { item.PartnerCode = strings.TrimSpace(row[1]) }
-		if len(row) > 2 { item.PartnerName = strings.TrimSpace(row[2]) }
-		if len(row) > 3 { item.InvoiceNumber = strings.TrimSpace(row[3]) }
-		if len(row) > 4 { item.InvoiceDate = strings.TrimSpace(row[4]) }
-		if len(row) > 5 { item.InvoiceSum = strings.TrimSpace(row[5]) }
-		if len(row) > 6 { item.TaxRate = strings.TrimSpace(row[6]) }
-		if len(row) > 8 { item.SumForRateInPeriod = strings.TrimSpace(row[8]) }
-		if len(row) > 9 && strings.TrimSpace(row[9]) != "" { item.CommentCodes = []string{strings.TrimSpace(row[9])} }
+		if len(row) > 1 {
+			item.PartnerCode = strings.TrimSpace(row[1])
+		}
+		if len(row) > 2 {
+			item.PartnerName = strings.TrimSpace(row[2])
+		}
+		if len(row) > 3 {
+			item.InvoiceNumber = strings.TrimSpace(row[3])
+		}
+		if len(row) > 4 {
+			item.InvoiceDate = strings.TrimSpace(row[4])
+		}
+		if len(row) > 5 {
+			item.InvoiceSum = strings.TrimSpace(row[5])
+		}
+		if len(row) > 6 {
+			item.TaxRate = strings.TrimSpace(row[6])
+		}
+		if len(row) > 8 {
+			item.SumForRateInPeriod = strings.TrimSpace(row[8])
+		}
+		if len(row) > 9 && strings.TrimSpace(row[9]) != "" {
+			item.CommentCodes = []string{strings.TrimSpace(row[9])}
+		}
 		result.Rows = append(result.Rows, item)
 	}
 	return result, nil
@@ -560,13 +678,27 @@ func ParseKMDINFBCSV(data []byte) (*KMDINFBRows, error) {
 			continue
 		}
 		item := KMDINFBRow{}
-		if len(row) > 1 { item.PartnerCode = strings.TrimSpace(row[1]) }
-		if len(row) > 2 { item.PartnerName = strings.TrimSpace(row[2]) }
-		if len(row) > 3 { item.InvoiceNumber = strings.TrimSpace(row[3]) }
-		if len(row) > 4 { item.InvoiceDate = strings.TrimSpace(row[4]) }
-		if len(row) > 5 { item.InvoiceSumVAT = strings.TrimSpace(row[5]) }
-		if len(row) > 7 { item.VATInPeriod = strings.TrimSpace(row[7]) }
-		if len(row) > 8 && strings.TrimSpace(row[8]) != "" { item.CommentCodes = []string{strings.TrimSpace(row[8])} }
+		if len(row) > 1 {
+			item.PartnerCode = strings.TrimSpace(row[1])
+		}
+		if len(row) > 2 {
+			item.PartnerName = strings.TrimSpace(row[2])
+		}
+		if len(row) > 3 {
+			item.InvoiceNumber = strings.TrimSpace(row[3])
+		}
+		if len(row) > 4 {
+			item.InvoiceDate = strings.TrimSpace(row[4])
+		}
+		if len(row) > 5 {
+			item.InvoiceSumVAT = strings.TrimSpace(row[5])
+		}
+		if len(row) > 7 {
+			item.VATInPeriod = strings.TrimSpace(row[7])
+		}
+		if len(row) > 8 && strings.TrimSpace(row[8]) != "" {
+			item.CommentCodes = []string{strings.TrimSpace(row[8])}
+		}
 		result.Rows = append(result.Rows, item)
 	}
 	return result, nil
@@ -894,11 +1026,11 @@ func (c *Client) UpdateKMDMainFromPatch(declarationID string, patch KMDMainPatch
 	if err != nil {
 		page, pageErr := c.openKMDDeclaration(declarationID)
 		if pageErr != nil {
-			return c.UpdateKMDMain(declarationID, patch)
+			return nil, pageErr
 		}
 		meta, metaErr := parseKMDFileMetadataFromHTML(page.HTML)
 		if metaErr != nil {
-			return c.UpdateKMDMain(declarationID, patch)
+			return nil, metaErr
 		}
 		section := &KMDMainSection{}
 		applyKMDMainPatch(section, patch)
@@ -909,6 +1041,7 @@ func (c *Client) UpdateKMDMainFromPatch(declarationID string, patch KMDMainPatch
 		if _, impErr := c.ImportKMDFile(declarationID, "kmd-main.csv", updatedBytes); impErr != nil {
 			return nil, impErr
 		}
+		_ = saveCachedKMDReport(declarationID, "main", updatedBytes)
 		section.DeclarationID = declarationID
 		return section, nil
 	}
@@ -924,6 +1057,7 @@ func (c *Client) UpdateKMDMainFromPatch(declarationID string, patch KMDMainPatch
 	if _, err := c.ImportKMDFile(declarationID, "kmd-main.csv", updatedBytes); err != nil {
 		return nil, err
 	}
+	_ = saveCachedKMDReport(declarationID, "main", updatedBytes)
 	section.DeclarationID = declarationID
 	return section, nil
 }
@@ -933,11 +1067,11 @@ func (c *Client) UpdateKMDINFAFromPatch(declarationID string, patch KMDINFAPatch
 	if err != nil {
 		page, pageErr := c.openKMDDeclaration(declarationID)
 		if pageErr != nil {
-			return c.UpdateKMDINFA(declarationID, patch)
+			return nil, pageErr
 		}
 		meta, metaErr := parseKMDFileMetadataFromHTML(page.HTML)
 		if metaErr != nil {
-			return c.UpdateKMDINFA(declarationID, patch)
+			return nil, metaErr
 		}
 		state := &KMDINFARows{Rows: patch.Rows, DeclarationID: declarationID}
 		updatedBytes, buildErr := buildKMDINFACSVFromScratch(meta, state)
@@ -947,6 +1081,7 @@ func (c *Client) UpdateKMDINFAFromPatch(declarationID string, patch KMDINFAPatch
 		if _, impErr := c.ImportKMDFile(declarationID, "kmd-infa.csv", updatedBytes); impErr != nil {
 			return nil, impErr
 		}
+		_ = saveCachedKMDReport(declarationID, "inf-a", updatedBytes)
 		return state, nil
 	}
 	state, err := ParseKMDINFACSV(exported.Bytes)
@@ -965,6 +1100,7 @@ func (c *Client) UpdateKMDINFAFromPatch(declarationID string, patch KMDINFAPatch
 	if _, err := c.ImportKMDFile(declarationID, "kmd-infa.csv", updatedBytes); err != nil {
 		return nil, err
 	}
+	_ = saveCachedKMDReport(declarationID, "inf-a", updatedBytes)
 	state.DeclarationID = declarationID
 	return state, nil
 }
@@ -972,7 +1108,11 @@ func (c *Client) UpdateKMDINFAFromPatch(declarationID string, patch KMDINFAPatch
 func (c *Client) DeleteKMDINFAFromFile(declarationID, partnerCode, invoiceNumber string) (*KMDINFARows, error) {
 	exported, err := c.ExportKMDReport(declarationID, "inf-a")
 	if err != nil {
-		return c.DeleteKMDINFA(declarationID, partnerCode, invoiceNumber)
+		cached, cacheErr := loadCachedKMDReport(declarationID, "inf-a")
+		if cacheErr != nil {
+			return nil, err
+		}
+		exported = &XMLExportResult{Bytes: cached}
 	}
 	state, err := ParseKMDINFACSV(exported.Bytes)
 	if err != nil {
@@ -990,6 +1130,7 @@ func (c *Client) DeleteKMDINFAFromFile(declarationID, partnerCode, invoiceNumber
 	if _, err := c.ImportKMDFile(declarationID, "kmd-infa.csv", updatedBytes); err != nil {
 		return nil, err
 	}
+	_ = saveCachedKMDReport(declarationID, "inf-a", updatedBytes)
 	state.DeclarationID = declarationID
 	return state, nil
 }
@@ -999,11 +1140,11 @@ func (c *Client) UpdateKMDINFBFromPatch(declarationID string, patch KMDINFBPatch
 	if err != nil {
 		page, pageErr := c.openKMDDeclaration(declarationID)
 		if pageErr != nil {
-			return c.UpdateKMDINFB(declarationID, patch)
+			return nil, pageErr
 		}
 		meta, metaErr := parseKMDFileMetadataFromHTML(page.HTML)
 		if metaErr != nil {
-			return c.UpdateKMDINFB(declarationID, patch)
+			return nil, metaErr
 		}
 		state := &KMDINFBRows{Rows: patch.Rows, DeclarationID: declarationID}
 		updatedBytes, buildErr := buildKMDINFBCSVFromScratch(meta, state)
@@ -1013,6 +1154,7 @@ func (c *Client) UpdateKMDINFBFromPatch(declarationID string, patch KMDINFBPatch
 		if _, impErr := c.ImportKMDFile(declarationID, "kmd-infb.csv", updatedBytes); impErr != nil {
 			return nil, impErr
 		}
+		_ = saveCachedKMDReport(declarationID, "inf-b", updatedBytes)
 		return state, nil
 	}
 	state, err := ParseKMDINFBCSV(exported.Bytes)
@@ -1031,6 +1173,7 @@ func (c *Client) UpdateKMDINFBFromPatch(declarationID string, patch KMDINFBPatch
 	if _, err := c.ImportKMDFile(declarationID, "kmd-infb.csv", updatedBytes); err != nil {
 		return nil, err
 	}
+	_ = saveCachedKMDReport(declarationID, "inf-b", updatedBytes)
 	state.DeclarationID = declarationID
 	return state, nil
 }
@@ -1038,7 +1181,11 @@ func (c *Client) UpdateKMDINFBFromPatch(declarationID string, patch KMDINFBPatch
 func (c *Client) DeleteKMDINFBFromFile(declarationID, partnerCode, invoiceNumber string) (*KMDINFBRows, error) {
 	exported, err := c.ExportKMDReport(declarationID, "inf-b")
 	if err != nil {
-		return c.DeleteKMDINFB(declarationID, partnerCode, invoiceNumber)
+		cached, cacheErr := loadCachedKMDReport(declarationID, "inf-b")
+		if cacheErr != nil {
+			return nil, err
+		}
+		exported = &XMLExportResult{Bytes: cached}
 	}
 	state, err := ParseKMDINFBCSV(exported.Bytes)
 	if err != nil {
@@ -1056,6 +1203,7 @@ func (c *Client) DeleteKMDINFBFromFile(declarationID, partnerCode, invoiceNumber
 	if _, err := c.ImportKMDFile(declarationID, "kmd-infb.csv", updatedBytes); err != nil {
 		return nil, err
 	}
+	_ = saveCachedKMDReport(declarationID, "inf-b", updatedBytes)
 	state.DeclarationID = declarationID
 	return state, nil
 }

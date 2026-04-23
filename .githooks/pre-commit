@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+mapfile -t staged_go_files < <(git diff --cached --name-only --diff-filter=ACMR | grep '\.go$' || true)
+
+if ((${#staged_go_files[@]} > 0)); then
+  gofmt -w "${staged_go_files[@]}"
+  git add "${staged_go_files[@]}"
+fi
+
+(cd cli/emta && go test ./api ./cmd)

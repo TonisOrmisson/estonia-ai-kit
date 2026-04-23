@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -16,6 +18,8 @@ func newTSDCommand() *cobra.Command {
 		Use:   "tsd",
 		Short: "Income and social tax return (TSD) operations",
 	}
+
+	tsdCmd.AddCommand(newTSDXMLCommand())
 
 	var listYear string
 	tsdListCmd := &cobra.Command{
@@ -112,4 +116,49 @@ func newTSDCommand() *cobra.Command {
 
 	tsdCmd.AddCommand(tsdListCmd, tsdShowCmd)
 	return tsdCmd
+}
+
+func newTSDXMLCommand() *cobra.Command {
+	tsdXMLCmd := &cobra.Command{
+		Use:   "xml",
+		Short: "TSD XML import/export operations",
+	}
+
+	var declarationID string
+	var outputPath string
+
+	exportCmd := &cobra.Command{
+		Use:   "export",
+		Short: "Export TSD declaration XML",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if declarationID == "" || outputPath == "" {
+				return fmt.Errorf("--declaration-id and --output are required")
+			}
+
+			client, err := loadEMTAClient()
+			if err != nil {
+				return err
+			}
+
+			result, err := client.ExportTSDXML(declarationID)
+			if err != nil {
+				return err
+			}
+
+			if err := os.WriteFile(outputPath, result.Bytes, 0o600); err != nil {
+				return err
+			}
+
+			return printJSON(map[string]string{
+				"declaration_id": result.DeclarationID,
+				"output":         outputPath,
+				"file_name":      filepath.Base(result.FileName),
+			})
+		},
+	}
+	exportCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Stable declaration id from tsd list")
+	exportCmd.Flags().StringVar(&outputPath, "output", "", "Path to write XML file")
+
+	tsdXMLCmd.AddCommand(exportCmd)
+	return tsdXMLCmd
 }

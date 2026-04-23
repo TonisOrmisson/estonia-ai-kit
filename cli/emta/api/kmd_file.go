@@ -93,6 +93,10 @@ func parseKMDGeneratedFiles(html string) ([]KMDGeneratedFile, error) {
 		if values[0] == "" {
 			return
 		}
+		href, hasHref := cells.Eq(4).Find("a").Attr("href")
+		if !hasHref && !strings.Contains(values[1], "Genereer") && !strings.Contains(values[1], "Valmis") {
+			return
+		}
 
 		row := KMDGeneratedFile{
 			Part:        values[0],
@@ -102,7 +106,7 @@ func parseKMDGeneratedFiles(html string) ([]KMDGeneratedFile, error) {
 		}
 		if cells.Length() >= 5 {
 			row.FileName = values[4]
-			if href, ok := cells.Eq(4).Find("a").Attr("href"); ok {
+			if hasHref {
 				row.DownloadHref = href
 			}
 		}

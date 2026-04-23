@@ -204,7 +204,11 @@ func (c *Client) openKMDFileUploadPage(declarationID string) (*kmdPage, error) {
 }
 
 func (c *Client) DeleteKMDDraft(declarationID string) error {
-	items, err := c.ListKMDDeclarations()
+	basePage, err := c.getKMDPage("/customer-kmd2/declarations?1")
+	if err != nil {
+		return err
+	}
+	items, err := parseKMDList(basePage.HTML)
 	if err != nil {
 		return err
 	}
@@ -214,11 +218,6 @@ func (c *Client) DeleteKMDDraft(declarationID string) error {
 	}
 	if item.DeleteID == "" {
 		return fmt.Errorf("kmd declaration has no delete action: %s", declarationID)
-	}
-
-	basePage, err := c.getKMDPage("/customer-kmd2/declarations?1")
-	if err != nil {
-		return err
 	}
 	confirmPage, err := c.getKMDPageWithReferer(resolveKMDURL(basePage.PageURL, item.DeleteID), basePage.PageURL)
 	if err != nil {

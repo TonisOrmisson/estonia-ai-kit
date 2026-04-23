@@ -15,6 +15,8 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
+// KMD XML migration should reuse xml_workflow.go once TSD XML is stable.
+
 type KMDListItem struct {
 	DeclarationID string `json:"declaration_id"`
 	ViewID        string `json:"view_id,omitempty"`

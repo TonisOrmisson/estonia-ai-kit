@@ -502,12 +502,12 @@ func readJSONFile(path string, target any) error {
 
 func findDraftDeclarationID(items []api.KMDListItem, year, month int) string {
 	for _, item := range items {
-		if item.Year == year && item.Month == month && item.UpdateID != "" && !strings.EqualFold(item.Status, "Esitatud") {
+		if item.Year == year && item.Month == month && item.DeclarationID != "" && !strings.EqualFold(item.Status, "Esitatud") {
 			return item.DeclarationID
 		}
 	}
 	for _, item := range items {
-		if item.Year == year && item.Month == month && item.UpdateID != "" {
+		if item.Year == year && item.Month == month && item.DeclarationID != "" {
 			return item.DeclarationID
 		}
 	}

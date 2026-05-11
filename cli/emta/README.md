@@ -63,6 +63,30 @@ To clear the saved session:
 
 Get the declaration ID from `tsd list`.
 
+### TSD XML Export
+
+```sh
+./emta-cli tsd xml export --declaration-id <id> --output tsd.xml
+```
+
+### TSD XML Import Into New Draft
+
+```sh
+./emta-cli tsd xml import --year 2026 --month 3 --input tsd.xml
+```
+
+Optionally include appendices and INF1 together with tax sums:
+
+```sh
+./emta-cli tsd xml import --year 2026 --month 3 --input tsd.xml --with-sums
+```
+
+### Submit TSD Draft
+
+```sh
+./emta-cli tsd submit --declaration-id <id> --confirm
+```
+
 ### KMD
 
 List all KMD declarations:

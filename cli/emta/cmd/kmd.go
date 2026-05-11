@@ -13,15 +13,24 @@ import (
 func init() {
 	var declarationID string
 	var inputPath string
+	var outputPath string
 	var year int
 	var month int
 	var submitConfirm bool
+	var deleteConfirm bool
 	var partnerCode string
 	var invoiceNumber string
+	var reportType string
+	var downloadHref string
 
 	kmdCmd := &cobra.Command{
 		Use:   "kmd",
 		Short: "Käibedeklaratsioon (KMD) operations",
+	}
+
+	kmdFileCmd := &cobra.Command{
+		Use:   "file",
+		Short: "KMD file import/export operations",
 	}
 
 	kmdListCmd := &cobra.Command{
@@ -64,6 +73,154 @@ func init() {
 	kmdSubmitCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Stable declaration id from kmd list")
 	kmdSubmitCmd.Flags().BoolVar(&submitConfirm, "confirm", false, "Actually submit the declaration")
 
+	kmdDeleteCmd := &cobra.Command{
+		Use:   "delete",
+		Short: "Delete an unsent KMD draft by declaration id",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if declarationID == "" {
+				return fmt.Errorf("--declaration-id is required")
+			}
+			if !deleteConfirm {
+				return fmt.Errorf("--confirm is required for delete")
+			}
+			client, err := loadEMTAClient()
+			if err != nil {
+				return err
+			}
+			return client.DeleteKMDDraft(declarationID)
+		},
+	}
+	kmdDeleteCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Stable declaration id from kmd list")
+	kmdDeleteCmd.Flags().BoolVar(&deleteConfirm, "confirm", false, "Actually delete the draft")
+
+	kmdFileImportCmd := &cobra.Command{
+		Use:   "import",
+		Short: "Import a file into an existing KMD draft",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if declarationID == "" || inputPath == "" {
+				return fmt.Errorf("--declaration-id and --input are required")
+			}
+			client, err := loadEMTAClient()
+			if err != nil {
+				return err
+			}
+			fileBytes, err := os.ReadFile(inputPath)
+			if err != nil {
+				return err
+			}
+			result, err := client.ImportKMDFile(declarationID, inputPath, fileBytes)
+			if err != nil {
+				return err
+			}
+			return printJSON(result)
+		},
+	}
+	kmdFileImportCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Stable declaration id from kmd list")
+	kmdFileImportCmd.Flags().StringVar(&inputPath, "input", "", "Path to KMD input file")
+
+	kmdFileCreateCmd := &cobra.Command{
+		Use:   "create-from-file",
+		Short: "Create a new KMD draft and import file data into it",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if inputPath == "" || year == 0 || month == 0 {
+				return fmt.Errorf("--input, --year and --month are required")
+			}
+			client, err := loadEMTAClient()
+			if err != nil {
+				return err
+			}
+			fileBytes, err := os.ReadFile(inputPath)
+			if err != nil {
+				return err
+			}
+			result, err := client.CreateKMDDraftFromFile(year, month, inputPath, fileBytes)
+			if err != nil {
+				return err
+			}
+			return printJSON(result)
+		},
+	}
+	kmdFileCreateCmd.Flags().StringVar(&inputPath, "input", "", "Path to KMD input file")
+	kmdFileCreateCmd.Flags().IntVar(&year, "year", 0, "Tax year")
+	kmdFileCreateCmd.Flags().IntVar(&month, "month", 0, "Tax month (1-12)")
+
+	kmdFileRequestCmd := &cobra.Command{
+		Use:   "request",
+		Short: "Request generation of a KMD export file",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if declarationID == "" || reportType == "" {
+				return fmt.Errorf("--declaration-id and --report-type are required")
+			}
+			client, err := loadEMTAClient()
+			if err != nil {
+				return err
+			}
+			rows, err := client.RequestKMDGeneratedFile(declarationID, reportType)
+			if err != nil {
+				return err
+			}
+			return printJSON(rows)
+		},
+	}
+	kmdFileRequestCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Stable declaration id from kmd list")
+	kmdFileRequestCmd.Flags().StringVar(&reportType, "report-type", "", "One of: main, inf-a, inf-a-summary, inf-b, inf-b-summary, all")
+
+	kmdFileListCmd := &cobra.Command{
+		Use:   "list-generated",
+		Short: "List generated KMD files for a declaration",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if declarationID == "" {
+				return fmt.Errorf("--declaration-id is required")
+			}
+			client, err := loadEMTAClient()
+			if err != nil {
+				return err
+			}
+			page, err := client.OpenKMDGeneratedFilesPage(declarationID)
+			if err != nil {
+				return err
+			}
+			rows, err := api.ParseKMDGeneratedFilesForCLI(page.HTML)
+			if err != nil {
+				return err
+			}
+			return printJSON(rows)
+		},
+	}
+	kmdFileListCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Stable declaration id from kmd list")
+
+	kmdFileDownloadCmd := &cobra.Command{
+		Use:   "download",
+		Short: "Download a generated KMD file by href",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if declarationID == "" || downloadHref == "" || outputPath == "" {
+				return fmt.Errorf("--declaration-id, --href and --output are required")
+			}
+			client, err := loadEMTAClient()
+			if err != nil {
+				return err
+			}
+			page, err := client.OpenKMDGeneratedFilesPage(declarationID)
+			if err != nil {
+				return err
+			}
+			result, err := client.DownloadKMDGeneratedFile(page.PageURL, downloadHref)
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(outputPath, result.Bytes, 0o600); err != nil {
+				return err
+			}
+			return printJSON(map[string]string{
+				"output":    outputPath,
+				"file_name": result.FileName,
+			})
+		},
+	}
+	kmdFileDownloadCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Stable declaration id from kmd list")
+	kmdFileDownloadCmd.Flags().StringVar(&downloadHref, "href", "", "Download href from list-generated output")
+	kmdFileDownloadCmd.Flags().StringVar(&outputPath, "output", "", "Path to save generated file")
+
 	mainCmd := &cobra.Command{
 		Use:   "main",
 		Short: "KMD base form",
@@ -101,7 +258,7 @@ func init() {
 					return fmt.Errorf("created draft for %04d-%02d but could not resolve declaration id from list", year, month)
 				}
 
-				section, err = client.UpdateKMDMain(declarationID, patch)
+				section, err = client.UpdateKMDMainFromPatch(declarationID, patch)
 				if err != nil {
 					return err
 				}
@@ -132,7 +289,7 @@ func init() {
 			if err != nil {
 				return err
 			}
-			section, err := client.ReadKMDMain(declarationID)
+			section, err := client.ReadKMDMainFromFile(declarationID)
 			if err != nil {
 				return err
 			}
@@ -156,7 +313,7 @@ func init() {
 			if err := readJSONFile(inputPath, &patch); err != nil {
 				return err
 			}
-			section, err := client.UpdateKMDMain(declarationID, patch)
+			section, err := client.UpdateKMDMainFromPatch(declarationID, patch)
 			if err != nil {
 				return err
 			}
@@ -182,7 +339,7 @@ func init() {
 			if err != nil {
 				return err
 			}
-			rows, err := client.ReadKMDINFA(declarationID)
+			rows, err := client.ReadKMDINFAFromFile(declarationID)
 			if err != nil {
 				return err
 			}
@@ -206,7 +363,7 @@ func init() {
 			if err := readJSONFile(inputPath, &patch); err != nil {
 				return err
 			}
-			rows, err := client.UpdateKMDINFA(declarationID, patch)
+			rows, err := client.UpdateKMDINFAFromPatch(declarationID, patch)
 			if err != nil {
 				return err
 			}
@@ -227,7 +384,7 @@ func init() {
 			if err != nil {
 				return err
 			}
-			rows, err := client.DeleteKMDINFA(declarationID, partnerCode, invoiceNumber)
+			rows, err := client.DeleteKMDINFAFromFile(declarationID, partnerCode, invoiceNumber)
 			if err != nil {
 				return err
 			}
@@ -254,7 +411,7 @@ func init() {
 			if err != nil {
 				return err
 			}
-			rows, err := client.ReadKMDINFB(declarationID)
+			rows, err := client.ReadKMDINFBFromFile(declarationID)
 			if err != nil {
 				return err
 			}
@@ -278,7 +435,7 @@ func init() {
 			if err := readJSONFile(inputPath, &patch); err != nil {
 				return err
 			}
-			rows, err := client.UpdateKMDINFB(declarationID, patch)
+			rows, err := client.UpdateKMDINFBFromPatch(declarationID, patch)
 			if err != nil {
 				return err
 			}
@@ -299,7 +456,7 @@ func init() {
 			if err != nil {
 				return err
 			}
-			rows, err := client.DeleteKMDINFB(declarationID, partnerCode, invoiceNumber)
+			rows, err := client.DeleteKMDINFBFromFile(declarationID, partnerCode, invoiceNumber)
 			if err != nil {
 				return err
 			}
@@ -313,7 +470,8 @@ func init() {
 	mainCmd.AddCommand(mainCreateCmd, mainReadCmd, mainUpdateCmd)
 	infACmd.AddCommand(infAReadCmd, infAUpdateCmd, infADeleteCmd)
 	infBCmd.AddCommand(infBReadCmd, infBUpdateCmd, infBDeleteCmd)
-	kmdCmd.AddCommand(kmdListCmd, kmdSubmitCmd, mainCmd, infACmd, infBCmd)
+	kmdFileCmd.AddCommand(kmdFileImportCmd, kmdFileCreateCmd, kmdFileRequestCmd, kmdFileListCmd, kmdFileDownloadCmd)
+	kmdCmd.AddCommand(kmdListCmd, kmdSubmitCmd, kmdDeleteCmd, kmdFileCmd, mainCmd, infACmd, infBCmd)
 	rootCmd.AddCommand(kmdCmd)
 }
 
@@ -345,12 +503,12 @@ func readJSONFile(path string, target any) error {
 func findDraftDeclarationID(items []api.KMDListItem, year, month int) string {
 	for _, item := range items {
 		if item.Year == year && item.Month == month && item.UpdateID != "" && !strings.EqualFold(item.Status, "Esitatud") {
-			return item.UpdateID
+			return item.DeclarationID
 		}
 	}
 	for _, item := range items {
 		if item.Year == year && item.Month == month && item.UpdateID != "" {
-			return item.UpdateID
+			return item.DeclarationID
 		}
 	}
 	return ""

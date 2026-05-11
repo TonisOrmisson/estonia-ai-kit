@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/stefanoamorelli/estonia-ai-kit/cli/emta/auth"
 )
 
@@ -314,59 +315,54 @@ func (c *Client) GetTSDList(year string) (*TSDListResult, error) {
 func parseTSDList(html string) (*TSDListResult, error) {
 	result := &TSDListResult{}
 
-	// Extract person/company name from header
-	personRe := regexp.MustCompile(`Person represented</span>\s*<div>\s*<span>([^<]+)</span>`)
-	if m := personRe.FindStringSubmatch(html); m != nil {
-		result.Person = strings.TrimSpace(m[1])
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return nil, err
 	}
 
-	// Find the table body
-	tbodyStart := strings.Index(html, "<tbody>")
-	tbodyEnd := strings.Index(html, "</tbody>")
-	if tbodyStart == -1 || tbodyEnd == -1 {
-		return result, nil // empty list
+	if person := strings.TrimSpace(doc.Find("span:contains('Person represented')").Parent().Find("div span").First().Text()); person != "" {
+		result.Person = person
 	}
-	tbody := html[tbodyStart:tbodyEnd]
 
-	// Split by <tr> to get rows
-	rows := strings.Split(tbody, "<tr>")
+	doc.Find("tbody tr").Each(func(_ int, tr *goquery.Selection) {
+		decl := TSDDeclaration{}
+		var cols []string
+		tr.Find("td").Each(func(_ int, td *goquery.Selection) {
+			cols = append(cols, strings.TrimSpace(td.Text()))
+		})
 
-	for _, row := range rows {
-		if !strings.Contains(row, "<td>") {
-			continue
+		if len(cols) >= 9 {
+			decl.RegNo = cols[0]
+			decl.Form = cols[1]
+			decl.SubmissionDate = cols[2]
+			decl.Year = cols[3]
+			decl.Month = cols[4]
+			decl.Status = cols[6]
+			decl.Method = cols[7]
+			decl.ModifiedBy = cols[8]
+		} else if len(cols) >= 8 {
+			decl.RegNo = cols[0]
+			decl.Form = cols[1]
+			decl.SubmissionDate = cols[2]
+			decl.Year = cols[3]
+			decl.Month = cols[4]
+			decl.Status = cols[5]
+			decl.Method = cols[6]
+			decl.ModifiedBy = cols[7]
 		}
 
-		decl := TSDDeclaration{}
-
-		// Extract all <div> contents from <td> elements
-		divRe := regexp.MustCompile(`<div[^>]*>\s*(.*?)\s*</div>`)
-		divMatches := divRe.FindAllStringSubmatch(row, -1)
-
-		if len(divMatches) >= 8 {
-			decl.RegNo = strings.TrimSpace(divMatches[0][1])
-			decl.Form = strings.TrimSpace(divMatches[1][1])
-			decl.SubmissionDate = strings.TrimSpace(divMatches[2][1])
-			decl.Year = strings.TrimSpace(divMatches[3][1])
-			decl.Month = strings.TrimSpace(divMatches[4][1])
-			// divMatches[5] is Bankr.exists (empty)
-			decl.Status = strings.TrimSpace(divMatches[6][1])
-			decl.Method = strings.TrimSpace(divMatches[7][1])
-			if len(divMatches) >= 9 {
-				decl.ModifiedBy = strings.TrimSpace(divMatches[8][1])
+		if show, ok := tr.Find(`a[name="show"]`).Attr("href"); ok {
+			showRe := regexp.MustCompile(`/tsd2/client/declaration/(\d+)/`)
+			if m := showRe.FindStringSubmatch(show); m != nil {
+				decl.DeclarationID = m[1]
+				decl.ShowURL = show
 			}
 		}
 
-		// Extract declaration ID from the show link
-		showRe := regexp.MustCompile(`href="/tsd2/client/declaration/(\d+)/summary/show/"`)
-		if m := showRe.FindStringSubmatch(row); m != nil {
-			decl.DeclarationID = m[1]
-			decl.ShowURL = "/tsd2/client/declaration/" + m[1] + "/summary/show/"
-		}
-
-		if decl.RegNo != "" {
+		if decl.DeclarationID != "" || decl.RegNo != "" {
 			result.Declarations = append(result.Declarations, decl)
 		}
-	}
+	})
 
 	return result, nil
 }

@@ -19,6 +19,7 @@ func TestParseKMDList(t *testing.T) {
     <td><div>Ei</div></td>
     <td><a href="./declarations?1-1.ILinkListener-contentPanel-contentComponent-vat_declarations-1-view">Vaata</a></td>
     <td><a href="./declarations?1-1.ILinkListener-contentPanel-contentComponent-vat_declarations-1-edit">Paranda</a></td>
+    <td><a href="./declarations?1-1.ILinkListener-contentPanel-contentComponent-vat_declarations-1-delete">Kustuta</a></td>
   </tr>
 </table>`
 
@@ -34,6 +35,9 @@ func TestParseKMDList(t *testing.T) {
 	}
 	if items[0].UpdateID != "./declarations?1-1.ILinkListener-contentPanel-contentComponent-vat_declarations-1-edit" {
 		t.Fatalf("unexpected update id: %q", items[0].UpdateID)
+	}
+	if items[0].DeleteID != "./declarations?1-1.ILinkListener-contentPanel-contentComponent-vat_declarations-1-delete" {
+		t.Fatalf("unexpected delete id: %q", items[0].DeleteID)
 	}
 	if items[0].Year != 2026 || items[0].Month != 1 {
 		t.Fatalf("unexpected period: %+v", items[0])

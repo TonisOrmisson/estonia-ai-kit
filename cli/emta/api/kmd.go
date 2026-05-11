@@ -15,10 +15,13 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
+// KMD XML migration should reuse xml_workflow.go once TSD XML is stable.
+
 type KMDListItem struct {
 	DeclarationID string `json:"declaration_id"`
 	ViewID        string `json:"view_id,omitempty"`
 	UpdateID      string `json:"update_id,omitempty"`
+	DeleteID      string `json:"delete_id,omitempty"`
 	SubmittedDate string `json:"submitted_date,omitempty"`
 	Year          int    `json:"year,omitempty"`
 	Month         int    `json:"month,omitempty"`
@@ -230,7 +233,22 @@ func (c *Client) CreateKMDDraft(year, month int) (*KMDMainSection, error) {
 	}
 	section, err := parseKMDMainSection(current.HTML)
 	if err != nil {
-		return nil, err
+		items, listErr := c.ListKMDDeclarations()
+		if listErr != nil {
+			return nil, err
+		}
+		draftID := ""
+		for _, item := range items {
+			if item.Year == year && item.Month == month && item.UpdateID != "" && !strings.EqualFold(item.Status, "Esitatud") {
+				draftID = item.DeclarationID
+				break
+			}
+		}
+		return &KMDMainSection{
+			DeclarationID: draftID,
+			PageURL:       current.PageURL,
+			Status:        parseKMDStatus(current.HTML),
+		}, nil
 	}
 	section.PageURL = current.PageURL
 	return section, nil
@@ -1144,6 +1162,11 @@ func parseKMDList(html string) ([]KMDListItem, error) {
 		if cells.Length() > 9 {
 			if edit, ok := cells.Eq(9).Find("a").Attr("href"); ok {
 				item.UpdateID = edit
+			}
+		}
+		if cells.Length() > 10 {
+			if del, ok := cells.Eq(10).Find("a").Attr("href"); ok {
+				item.DeleteID = del
 			}
 		}
 		item.DeclarationID = makeKMDStableID(item)

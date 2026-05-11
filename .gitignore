@@ -29,6 +29,8 @@ node_modules
 /connect.lock
 /coverage
 /libpeerconnection.log
+/.omx/
+nohup.out
 npm-debug.log
 yarn-error.log
 testem.log

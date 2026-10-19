@@ -16,10 +16,7 @@ func init() {
 	var outputPath string
 	var year int
 	var month int
-	var submitConfirm bool
-	var deleteConfirm bool
-	var partnerCode string
-	var invoiceNumber string
+	var confirm bool
 	var reportType string
 	var downloadHref string
 
@@ -27,13 +24,22 @@ func init() {
 		Use:   "kmd",
 		Short: "Käibedeklaratsioon (KMD) operations",
 	}
-
-	kmdFileCmd := &cobra.Command{
-		Use:   "file",
-		Short: "KMD file import/export operations",
+	idFlag := func(c *cobra.Command) {
+		c.Flags().StringVar(&declarationID, "declaration-id", "", "Declaration id from kmd list")
+	}
+	inputFlag := func(c *cobra.Command) {
+		c.Flags().StringVar(&inputPath, "input", "", "Path to KMD declaration JSON (tax_payer_reg_code, year, month, main, inf_a, inf_b)")
+	}
+	need := func(pairs ...string) error {
+		for i := 0; i < len(pairs); i += 2 {
+			if pairs[i+1] == "" {
+				return fmt.Errorf("%s is required", pairs[i])
+			}
+		}
+		return nil
 	}
 
-	kmdListCmd := &cobra.Command{
+	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List all KMD declarations",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -49,19 +55,175 @@ func init() {
 		},
 	}
 
-	kmdSubmitCmd := &cobra.Command{
-		Use:   "submit",
-		Short: "Submit a saved KMD draft by declaration id",
+	createCmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create an empty KMD draft for a period",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if declarationID == "" {
-				return fmt.Errorf("--declaration-id is required")
-			}
-			if !submitConfirm {
-				return fmt.Errorf("--confirm is required for submit")
+			if year == 0 || month == 0 {
+				return fmt.Errorf("--year and --month are required")
 			}
 			client, err := loadEMTAClient()
 			if err != nil {
 				return err
+			}
+			if _, err := client.CreateKMDDraft(year, month); err != nil {
+				return err
+			}
+			items, err := client.ListKMDDeclarations()
+			if err != nil {
+				return err
+			}
+			id := findDraftDeclarationID(items, year, month)
+			if id == "" {
+				return fmt.Errorf("created draft for %04d-%02d but could not resolve declaration id from list", year, month)
+			}
+			return printJSON(map[string]string{"declaration_id": id})
+		},
+	}
+	createCmd.Flags().IntVar(&year, "year", 0, "Tax year")
+	createCmd.Flags().IntVar(&month, "month", 0, "Tax month (1-12)")
+
+	xmlCmd := &cobra.Command{
+		Use:   "xml",
+		Short: "KMD XML (official vatdeclaration.xsd) build and import",
+	}
+
+	xmlBuildCmd := &cobra.Command{
+		Use:   "build",
+		Short: "Validate declaration JSON and render KMD XML (offline)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := need("--input", inputPath); err != nil {
+				return err
+			}
+			in, err := readKMDInput(inputPath)
+			if err != nil {
+				return err
+			}
+			xmlBytes, err := api.BuildKMDXML(in)
+			if err != nil {
+				return err
+			}
+			if outputPath == "" {
+				_, err = os.Stdout.Write(xmlBytes)
+				return err
+			}
+			return os.WriteFile(outputPath, xmlBytes, 0o600)
+		},
+	}
+	inputFlag(xmlBuildCmd)
+	xmlBuildCmd.Flags().StringVar(&outputPath, "output", "", "Write XML here instead of stdout")
+
+	xmlImportCmd := &cobra.Command{
+		Use:   "import",
+		Short: "Upload declaration as KMD XML into a draft, check EMTA upload errors, then verify live",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := need("--declaration-id", declarationID, "--input", inputPath); err != nil {
+				return err
+			}
+			in, err := readKMDInput(inputPath)
+			if err != nil {
+				return err
+			}
+			client, err := loadEMTAClient()
+			if err != nil {
+				return err
+			}
+			imported, err := client.ImportKMDXML(declarationID, in)
+			if err != nil {
+				return err
+			}
+			verified, err := client.VerifyKMD(declarationID, in)
+			if err != nil {
+				return fmt.Errorf("uploaded %s but live verify failed: %w", imported.RawRedirect, err)
+			}
+			if err := printJSON(map[string]any{"uploaded_file": imported.RawRedirect, "messages": imported.Messages, "verify": verified}); err != nil {
+				return err
+			}
+			if !verified.OK {
+				return fmt.Errorf("live EMTA draft does not match input: %d difference(s)", len(verified.Differences))
+			}
+			return nil
+		},
+	}
+	idFlag(xmlImportCmd)
+	inputFlag(xmlImportCmd)
+
+	verifyCmd := &cobra.Command{
+		Use:   "verify",
+		Short: "Read the draft live from EMTA and compare it with the declaration JSON",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := need("--declaration-id", declarationID, "--input", inputPath); err != nil {
+				return err
+			}
+			in, err := readKMDInput(inputPath)
+			if err != nil {
+				return err
+			}
+			client, err := loadEMTAClient()
+			if err != nil {
+				return err
+			}
+			verified, err := client.VerifyKMD(declarationID, in)
+			if err != nil {
+				return err
+			}
+			if err := printJSON(verified); err != nil {
+				return err
+			}
+			if !verified.OK {
+				return fmt.Errorf("live EMTA draft does not match input: %d difference(s)", len(verified.Differences))
+			}
+			return nil
+		},
+	}
+	idFlag(verifyCmd)
+	inputFlag(verifyCmd)
+
+	uploadErrorsCmd := &cobra.Command{
+		Use:   "upload-errors",
+		Short: "List EMTA file upload errors shown on the declaration",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := need("--declaration-id", declarationID); err != nil {
+				return err
+			}
+			client, err := loadEMTAClient()
+			if err != nil {
+				return err
+			}
+			rows, err := client.ReadKMDUploadErrors(declarationID)
+			if err != nil {
+				return err
+			}
+			return printJSON(rows)
+		},
+	}
+	idFlag(uploadErrorsCmd)
+
+	submitCmd := &cobra.Command{
+		Use:   "submit",
+		Short: "Submit a KMD draft (requires EMTA_ALLOW_SUBMIT=1, --confirm and a passing live verify)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := need("--declaration-id", declarationID, "--input", inputPath); err != nil {
+				return err
+			}
+			if err := requireSubmitPermission(confirm); err != nil {
+				return err
+			}
+			in, err := readKMDInput(inputPath)
+			if err != nil {
+				return err
+			}
+			client, err := loadEMTAClient()
+			if err != nil {
+				return err
+			}
+			verified, err := client.VerifyKMD(declarationID, in)
+			if err != nil {
+				return err
+			}
+			if !verified.OK {
+				_ = printJSON(verified)
+				return fmt.Errorf("refusing to submit: live draft does not match input")
 			}
 			result, err := client.SubmitKMD(declarationID)
 			if err != nil {
@@ -70,17 +232,18 @@ func init() {
 			return printJSON(result)
 		},
 	}
-	kmdSubmitCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Stable declaration id from kmd list")
-	kmdSubmitCmd.Flags().BoolVar(&submitConfirm, "confirm", false, "Actually submit the declaration")
+	idFlag(submitCmd)
+	inputFlag(submitCmd)
+	submitCmd.Flags().BoolVar(&confirm, "confirm", false, "Actually submit the declaration")
 
-	kmdDeleteCmd := &cobra.Command{
+	deleteCmd := &cobra.Command{
 		Use:   "delete",
 		Short: "Delete an unsent KMD draft by declaration id",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if declarationID == "" {
-				return fmt.Errorf("--declaration-id is required")
+			if err := need("--declaration-id", declarationID); err != nil {
+				return err
 			}
-			if !deleteConfirm {
+			if !confirm {
 				return fmt.Errorf("--confirm is required for delete")
 			}
 			client, err := loadEMTAClient()
@@ -90,66 +253,49 @@ func init() {
 			return client.DeleteKMDDraft(declarationID)
 		},
 	}
-	kmdDeleteCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Stable declaration id from kmd list")
-	kmdDeleteCmd.Flags().BoolVar(&deleteConfirm, "confirm", false, "Actually delete the draft")
+	idFlag(deleteCmd)
+	deleteCmd.Flags().BoolVar(&confirm, "confirm", false, "Actually delete the draft")
 
-	kmdFileImportCmd := &cobra.Command{
-		Use:   "import",
-		Short: "Import a file into an existing KMD draft",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if declarationID == "" || inputPath == "" {
-				return fmt.Errorf("--declaration-id and --input are required")
-			}
-			client, err := loadEMTAClient()
-			if err != nil {
-				return err
-			}
-			fileBytes, err := os.ReadFile(inputPath)
-			if err != nil {
-				return err
-			}
-			result, err := client.ImportKMDFile(declarationID, inputPath, fileBytes)
-			if err != nil {
-				return err
-			}
-			return printJSON(result)
-		},
+	readCmd := func(use, short string, read func(*api.Client, string) (any, error)) *cobra.Command {
+		c := &cobra.Command{
+			Use:   use,
+			Short: short,
+			RunE: func(cmd *cobra.Command, args []string) error {
+				if err := need("--declaration-id", declarationID); err != nil {
+					return err
+				}
+				client, err := loadEMTAClient()
+				if err != nil {
+					return err
+				}
+				v, err := read(client, declarationID)
+				if err != nil {
+					return err
+				}
+				return printJSON(v)
+			},
+		}
+		idFlag(c)
+		return c
 	}
-	kmdFileImportCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Stable declaration id from kmd list")
-	kmdFileImportCmd.Flags().StringVar(&inputPath, "input", "", "Path to KMD input file")
+	mainCmd := &cobra.Command{Use: "main", Short: "KMD base form"}
+	mainCmd.AddCommand(readCmd("read", "Read KMD main form live from EMTA", func(c *api.Client, id string) (any, error) { return c.ReadKMDMain(id) }))
+	infACmd := &cobra.Command{Use: "inf-a", Short: "KMD INF A section"}
+	infACmd.AddCommand(readCmd("read", "Read KMD INF A rows live from EMTA", func(c *api.Client, id string) (any, error) { return c.ReadKMDINFA(id) }))
+	infBCmd := &cobra.Command{Use: "inf-b", Short: "KMD INF B section"}
+	infBCmd.AddCommand(readCmd("read", "Read KMD INF B rows live from EMTA", func(c *api.Client, id string) (any, error) { return c.ReadKMDINFB(id) }))
 
-	kmdFileCreateCmd := &cobra.Command{
-		Use:   "create-from-file",
-		Short: "Create a new KMD draft and import file data into it",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if inputPath == "" || year == 0 || month == 0 {
-				return fmt.Errorf("--input, --year and --month are required")
-			}
-			client, err := loadEMTAClient()
-			if err != nil {
-				return err
-			}
-			fileBytes, err := os.ReadFile(inputPath)
-			if err != nil {
-				return err
-			}
-			result, err := client.CreateKMDDraftFromFile(year, month, inputPath, fileBytes)
-			if err != nil {
-				return err
-			}
-			return printJSON(result)
-		},
+	fileCmd := &cobra.Command{
+		Use:   "file",
+		Short: "KMD generated export files (Genereeri fail)",
 	}
-	kmdFileCreateCmd.Flags().StringVar(&inputPath, "input", "", "Path to KMD input file")
-	kmdFileCreateCmd.Flags().IntVar(&year, "year", 0, "Tax year")
-	kmdFileCreateCmd.Flags().IntVar(&month, "month", 0, "Tax month (1-12)")
 
-	kmdFileRequestCmd := &cobra.Command{
+	fileRequestCmd := &cobra.Command{
 		Use:   "request",
 		Short: "Request generation of a KMD export file",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if declarationID == "" || reportType == "" {
-				return fmt.Errorf("--declaration-id and --report-type are required")
+			if err := need("--declaration-id", declarationID, "--report-type", reportType); err != nil {
+				return err
 			}
 			client, err := loadEMTAClient()
 			if err != nil {
@@ -162,39 +308,23 @@ func init() {
 			return printJSON(rows)
 		},
 	}
-	kmdFileRequestCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Stable declaration id from kmd list")
-	kmdFileRequestCmd.Flags().StringVar(&reportType, "report-type", "", "One of: main, inf-a, inf-a-summary, inf-b, inf-b-summary, all")
+	idFlag(fileRequestCmd)
+	fileRequestCmd.Flags().StringVar(&reportType, "report-type", "", "One of: main, inf-a, inf-a-summary, inf-b, inf-b-summary, all")
 
-	kmdFileListCmd := &cobra.Command{
-		Use:   "list-generated",
-		Short: "List generated KMD files for a declaration",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if declarationID == "" {
-				return fmt.Errorf("--declaration-id is required")
-			}
-			client, err := loadEMTAClient()
-			if err != nil {
-				return err
-			}
-			page, err := client.OpenKMDGeneratedFilesPage(declarationID)
-			if err != nil {
-				return err
-			}
-			rows, err := api.ParseKMDGeneratedFilesForCLI(page.HTML)
-			if err != nil {
-				return err
-			}
-			return printJSON(rows)
-		},
-	}
-	kmdFileListCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Stable declaration id from kmd list")
+	fileListCmd := readCmd("list-generated", "List generated KMD files for a declaration", func(c *api.Client, id string) (any, error) {
+		page, err := c.OpenKMDGeneratedFilesPage(id)
+		if err != nil {
+			return nil, err
+		}
+		return api.ParseKMDGeneratedFilesForCLI(page.HTML)
+	})
 
-	kmdFileDownloadCmd := &cobra.Command{
+	fileDownloadCmd := &cobra.Command{
 		Use:   "download",
 		Short: "Download a generated KMD file by href",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if declarationID == "" || downloadHref == "" || outputPath == "" {
-				return fmt.Errorf("--declaration-id, --href and --output are required")
+			if err := need("--declaration-id", declarationID, "--href", downloadHref, "--output", outputPath); err != nil {
+				return err
 			}
 			client, err := loadEMTAClient()
 			if err != nil {
@@ -211,268 +341,37 @@ func init() {
 			if err := os.WriteFile(outputPath, result.Bytes, 0o600); err != nil {
 				return err
 			}
-			return printJSON(map[string]string{
-				"output":    outputPath,
-				"file_name": result.FileName,
-			})
+			return printJSON(map[string]string{"output": outputPath, "file_name": result.FileName})
 		},
 	}
-	kmdFileDownloadCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Stable declaration id from kmd list")
-	kmdFileDownloadCmd.Flags().StringVar(&downloadHref, "href", "", "Download href from list-generated output")
-	kmdFileDownloadCmd.Flags().StringVar(&outputPath, "output", "", "Path to save generated file")
+	idFlag(fileDownloadCmd)
+	fileDownloadCmd.Flags().StringVar(&downloadHref, "href", "", "Download href from list-generated output")
+	fileDownloadCmd.Flags().StringVar(&outputPath, "output", "", "Path to save generated file")
 
-	mainCmd := &cobra.Command{
-		Use:   "main",
-		Short: "KMD base form",
-	}
-
-	mainCreateCmd := &cobra.Command{
-		Use:   "create",
-		Short: "Create a new KMD draft and optionally fill the main form",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if year == 0 || month == 0 {
-				return fmt.Errorf("--year and --month are required")
-			}
-			client, err := loadEMTAClient()
-			if err != nil {
-				return err
-			}
-
-			section, err := client.CreateKMDDraft(year, month)
-			if err != nil {
-				return err
-			}
-
-			if inputPath != "" {
-				var patch api.KMDMainPatch
-				if err := readJSONFile(inputPath, &patch); err != nil {
-					return err
-				}
-
-				items, err := client.ListKMDDeclarations()
-				if err != nil {
-					return err
-				}
-				declarationID = findDraftDeclarationID(items, year, month)
-				if declarationID == "" {
-					return fmt.Errorf("created draft for %04d-%02d but could not resolve declaration id from list", year, month)
-				}
-
-				section, err = client.UpdateKMDMainFromPatch(declarationID, patch)
-				if err != nil {
-					return err
-				}
-			}
-
-			if section.DeclarationID == "" {
-				items, err := client.ListKMDDeclarations()
-				if err == nil {
-					section.DeclarationID = findDraftDeclarationID(items, year, month)
-				}
-			}
-
-			return printJSON(section)
-		},
-	}
-	mainCreateCmd.Flags().StringVar(&inputPath, "input", "", "Path to KMD main JSON input")
-	mainCreateCmd.Flags().IntVar(&year, "year", 0, "Tax year")
-	mainCreateCmd.Flags().IntVar(&month, "month", 0, "Tax month (1-12)")
-
-	mainReadCmd := &cobra.Command{
-		Use:   "read",
-		Short: "Read KMD main form by declaration id",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if declarationID == "" {
-				return fmt.Errorf("--declaration-id is required")
-			}
-			client, err := loadEMTAClient()
-			if err != nil {
-				return err
-			}
-			section, err := client.ReadKMDMainFromFile(declarationID)
-			if err != nil {
-				return err
-			}
-			return printJSON(section)
-		},
-	}
-	mainReadCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Opaque declaration id from kmd list")
-
-	mainUpdateCmd := &cobra.Command{
-		Use:   "update",
-		Short: "Update and save KMD main form by declaration id",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if declarationID == "" || inputPath == "" {
-				return fmt.Errorf("--declaration-id and --input are required")
-			}
-			client, err := loadEMTAClient()
-			if err != nil {
-				return err
-			}
-			var patch api.KMDMainPatch
-			if err := readJSONFile(inputPath, &patch); err != nil {
-				return err
-			}
-			section, err := client.UpdateKMDMainFromPatch(declarationID, patch)
-			if err != nil {
-				return err
-			}
-			return printJSON(section)
-		},
-	}
-	mainUpdateCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Opaque declaration id from kmd list")
-	mainUpdateCmd.Flags().StringVar(&inputPath, "input", "", "Path to KMD main JSON input")
-
-	infACmd := &cobra.Command{
-		Use:   "inf-a",
-		Short: "KMD INF A section",
-	}
-
-	infAReadCmd := &cobra.Command{
-		Use:   "read",
-		Short: "Read KMD INF A rows by declaration id",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if declarationID == "" {
-				return fmt.Errorf("--declaration-id is required")
-			}
-			client, err := loadEMTAClient()
-			if err != nil {
-				return err
-			}
-			rows, err := client.ReadKMDINFAFromFile(declarationID)
-			if err != nil {
-				return err
-			}
-			return printJSON(rows)
-		},
-	}
-	infAReadCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Opaque declaration id from kmd list")
-
-	infAUpdateCmd := &cobra.Command{
-		Use:   "update",
-		Short: "Add/update KMD INF A rows by declaration id",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if declarationID == "" || inputPath == "" {
-				return fmt.Errorf("--declaration-id and --input are required")
-			}
-			client, err := loadEMTAClient()
-			if err != nil {
-				return err
-			}
-			var patch api.KMDINFAPatch
-			if err := readJSONFile(inputPath, &patch); err != nil {
-				return err
-			}
-			rows, err := client.UpdateKMDINFAFromPatch(declarationID, patch)
-			if err != nil {
-				return err
-			}
-			return printJSON(rows)
-		},
-	}
-	infAUpdateCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Opaque declaration id from kmd list")
-	infAUpdateCmd.Flags().StringVar(&inputPath, "input", "", "Path to KMD INF A JSON input")
-
-	infADeleteCmd := &cobra.Command{
-		Use:   "delete",
-		Short: "Delete KMD INF A row by partner code and invoice number",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if declarationID == "" || partnerCode == "" || invoiceNumber == "" {
-				return fmt.Errorf("--declaration-id, --partner-code and --invoice-number are required")
-			}
-			client, err := loadEMTAClient()
-			if err != nil {
-				return err
-			}
-			rows, err := client.DeleteKMDINFAFromFile(declarationID, partnerCode, invoiceNumber)
-			if err != nil {
-				return err
-			}
-			return printJSON(rows)
-		},
-	}
-	infADeleteCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Stable declaration id from kmd list")
-	infADeleteCmd.Flags().StringVar(&partnerCode, "partner-code", "", "Partner code")
-	infADeleteCmd.Flags().StringVar(&invoiceNumber, "invoice-number", "", "Invoice number")
-
-	infBCmd := &cobra.Command{
-		Use:   "inf-b",
-		Short: "KMD INF B section",
-	}
-
-	infBReadCmd := &cobra.Command{
-		Use:   "read",
-		Short: "Read KMD INF B rows by declaration id",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if declarationID == "" {
-				return fmt.Errorf("--declaration-id is required")
-			}
-			client, err := loadEMTAClient()
-			if err != nil {
-				return err
-			}
-			rows, err := client.ReadKMDINFBFromFile(declarationID)
-			if err != nil {
-				return err
-			}
-			return printJSON(rows)
-		},
-	}
-	infBReadCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Opaque declaration id from kmd list")
-
-	infBUpdateCmd := &cobra.Command{
-		Use:   "update",
-		Short: "Add/update KMD INF B rows by declaration id",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if declarationID == "" || inputPath == "" {
-				return fmt.Errorf("--declaration-id and --input are required")
-			}
-			client, err := loadEMTAClient()
-			if err != nil {
-				return err
-			}
-			var patch api.KMDINFBPatch
-			if err := readJSONFile(inputPath, &patch); err != nil {
-				return err
-			}
-			rows, err := client.UpdateKMDINFBFromPatch(declarationID, patch)
-			if err != nil {
-				return err
-			}
-			return printJSON(rows)
-		},
-	}
-	infBUpdateCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Opaque declaration id from kmd list")
-	infBUpdateCmd.Flags().StringVar(&inputPath, "input", "", "Path to KMD INF B JSON input")
-
-	infBDeleteCmd := &cobra.Command{
-		Use:   "delete",
-		Short: "Delete KMD INF B row by partner code and invoice number",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if declarationID == "" || partnerCode == "" || invoiceNumber == "" {
-				return fmt.Errorf("--declaration-id, --partner-code and --invoice-number are required")
-			}
-			client, err := loadEMTAClient()
-			if err != nil {
-				return err
-			}
-			rows, err := client.DeleteKMDINFBFromFile(declarationID, partnerCode, invoiceNumber)
-			if err != nil {
-				return err
-			}
-			return printJSON(rows)
-		},
-	}
-	infBDeleteCmd.Flags().StringVar(&declarationID, "declaration-id", "", "Stable declaration id from kmd list")
-	infBDeleteCmd.Flags().StringVar(&partnerCode, "partner-code", "", "Partner code")
-	infBDeleteCmd.Flags().StringVar(&invoiceNumber, "invoice-number", "", "Invoice number")
-
-	mainCmd.AddCommand(mainCreateCmd, mainReadCmd, mainUpdateCmd)
-	infACmd.AddCommand(infAReadCmd, infAUpdateCmd, infADeleteCmd)
-	infBCmd.AddCommand(infBReadCmd, infBUpdateCmd, infBDeleteCmd)
-	kmdFileCmd.AddCommand(kmdFileImportCmd, kmdFileCreateCmd, kmdFileRequestCmd, kmdFileListCmd, kmdFileDownloadCmd)
-	kmdCmd.AddCommand(kmdListCmd, kmdSubmitCmd, kmdDeleteCmd, kmdFileCmd, mainCmd, infACmd, infBCmd)
+	xmlCmd.AddCommand(xmlBuildCmd, xmlImportCmd)
+	fileCmd.AddCommand(fileRequestCmd, fileListCmd, fileDownloadCmd)
+	kmdCmd.AddCommand(listCmd, createCmd, xmlCmd, verifyCmd, uploadErrorsCmd, submitCmd, deleteCmd, mainCmd, infACmd, infBCmd, fileCmd)
 	rootCmd.AddCommand(kmdCmd)
+}
+
+// requireSubmitPermission keeps declaration submission an explicit human decision:
+// agents and scripts cannot submit unless the operator exported EMTA_ALLOW_SUBMIT=1.
+func requireSubmitPermission(confirm bool) error {
+	if os.Getenv("EMTA_ALLOW_SUBMIT") != "1" {
+		return fmt.Errorf("submit is disabled: set EMTA_ALLOW_SUBMIT=1 in your own shell to allow it")
+	}
+	if !confirm {
+		return fmt.Errorf("--confirm is required for submit")
+	}
+	return nil
+}
+
+func readKMDInput(path string) (*api.KMDDeclarationInput, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return api.ParseKMDDeclarationInput(data)
 }
 
 func loadEMTAClient() (*api.Client, error) {
@@ -487,17 +386,6 @@ func printJSON(v any) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
-}
-
-func readJSONFile(path string, target any) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	if err := json.Unmarshal(data, target); err != nil {
-		return fmt.Errorf("parsing %s: %w", path, err)
-	}
-	return nil
 }
 
 func findDraftDeclarationID(items []api.KMDListItem, year, month int) string {

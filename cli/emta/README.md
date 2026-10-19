@@ -1,6 +1,6 @@
 # EMTA CLI
 
-CLI for Estonian Tax and Customs Board (EMTA) e-services. Authenticates via Smart-ID QR code and provides access to TSD (Income and Social Tax Return) declarations plus KMD draft read/write tooling.
+CLI for Estonian Tax and Customs Board (EMTA) e-services. Authenticates via Smart-ID QR code and provides access to TSD (Income and Social Tax Return) declarations plus KMD drafts via the official XML format.
 
 > [!IMPORTANT]
 > **Unofficial, open source & experimental.** This is a community-driven project, part of [Estonia AI Kit](https://github.com/stefanoamorelli/estonia-ai-kit). It is not affiliated with, endorsed by, or connected to the Estonian Tax and Customs Board (EMTA) or any Estonian government institution. It relies on undocumented web interfaces (HTML parsing, internal redirect chains) that **can break at any time** without notice. Sessions expire after ~30 minutes. Use at your own risk. The authors accept no liability for any issues arising from its use.
@@ -89,56 +89,27 @@ Optionally include appendices and INF1 together with tax sums:
 
 ### KMD
 
-List all KMD declarations:
+KMD is written only through EMTA's official XML format (`vatdeclaration.xsd`, schema copy in `testdata/kmd/`). One declaration JSON is the source for the upload and for the live check:
 
 ```sh
 ./emta-cli kmd list
+./emta-cli kmd create --year 2026 --month 9          # empty draft, prints declaration_id
+./emta-cli kmd xml build --input decl.json            # offline: validate + print XML
+./emta-cli kmd xml import --declaration-id <id> --input decl.json
+./emta-cli kmd verify --declaration-id <id> --input decl.json
 ```
 
-Read KMD main form:
+Example input: `./examples/kmd-declaration.json`. Main keys are KMD line numbers (`line_1`, `line_1_1`, `line_1_2`, `line_2`, `line_2_1`, `line_2_2`, `line_3`, `line_3_1`, `line_3_1_1`, `line_3_2`, `line_3_2_1`, `line_5`, `line_5_1`…`line_5_4`, `line_5_3_cars`, `line_5_4_cars`, `line_6`, `line_6_1`, `line_7`, `line_7_1`, `line_8`, `line_9`, `line_10`, `line_11`); unknown keys are rejected. `noSales`/`noPurchases` are derived from `inf_a`/`inf_b` (only rows at or above the INF threshold belong there).
 
-```sh
-./emta-cli kmd main read --declaration-id <id>
-```
+`kmd xml import` fails (non-zero exit) when:
 
-Update KMD main form from JSON:
+- the draft belongs to another taxpayer or period than the JSON says;
+- EMTA lists the uploaded file under "Failide laadimisel tekkinud vead";
+- the live main form, INF A or INF B read back from EMTA differs from the JSON.
 
-```sh
-./emta-cli kmd main update --declaration-id <id> --input main.json
-```
+Reads (`kmd main read`, `kmd inf-a read`, `kmd inf-b read`, `kmd verify`) always come live from the e-MTA form; there is no local cache. `kmd upload-errors --declaration-id <id>` lists EMTA's upload error table.
 
-Example input:
-
-```sh
-./examples/kmd-main.json
-```
-
-Read annex rows:
-
-```sh
-./emta-cli kmd inf-a read --declaration-id <id>
-./emta-cli kmd inf-b read --declaration-id <id>
-```
-
-Update annex rows from JSON:
-
-```sh
-./emta-cli kmd inf-a update --declaration-id <id> --input inf-a.json
-./emta-cli kmd inf-b update --declaration-id <id> --input inf-b.json
-```
-
-Example inputs:
-
-```sh
-./examples/kmd-inf-a.json
-./examples/kmd-inf-b.json
-```
-
-Submit saved KMD draft:
-
-```sh
-./emta-cli kmd submit --declaration-id <id> --confirm
-```
+Submitting is deliberately hard: `kmd submit --declaration-id <id> --input decl.json --confirm` only runs when the operator has exported `EMTA_ALLOW_SUBMIT=1`, and only after a passing live verify. `tsd submit` uses the same `EMTA_ALLOW_SUBMIT=1` guard.
 
 ## How It Works
 

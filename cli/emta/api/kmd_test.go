@@ -89,43 +89,6 @@ func TestDeriveWicketBehaviorURL(t *testing.T) {
 	}
 }
 
-func TestMergeINFARowsUpdatesExistingMatch(t *testing.T) {
-	existing := []KMDINFARow{{
-		PartnerCode: "10000000", PartnerName: "Old", InvoiceNumber: "INV1", InvoiceDate: "01.01.2026", InvoiceSum: "10,00", TaxRate: "24%", SumForRateInPeriod: "10,00",
-	}}
-	patch := []KMDINFARow{{
-		PartnerCode: "10000000", PartnerName: "New", InvoiceNumber: "INV1", InvoiceDate: "01.01.2026", InvoiceSum: "11,00", TaxRate: "24%", SumForRateInPeriod: "11,00",
-	}}
-
-	merged, changed, err := mergeINFARows(existing, patch)
-	if err != nil {
-		t.Fatalf("mergeINFARows returned error: %v", err)
-	}
-	if !changed {
-		t.Fatal("expected changed to be true")
-	}
-	if len(merged) != 1 || merged[0].PartnerName != "New" || merged[0].InvoiceSum != "11,00" {
-		t.Fatalf("unexpected merged rows: %+v", merged)
-	}
-}
-
-func TestMergeINFBRowsAppendsNewRow(t *testing.T) {
-	existing := []KMDINFBRow{{
-		PartnerCode: "A", InvoiceNumber: "1",
-	}}
-	patch := []KMDINFBRow{{
-		PartnerCode: "B", InvoiceNumber: "2",
-	}}
-
-	merged, changed, err := mergeINFBRows(existing, patch)
-	if err != nil {
-		t.Fatalf("mergeINFBRows returned error: %v", err)
-	}
-	if !changed || len(merged) != 2 {
-		t.Fatalf("unexpected merge result: changed=%v rows=%+v", changed, merged)
-	}
-}
-
 func TestParseKMDINFASection(t *testing.T) {
 	html := `
 <form action="./page?3-1.IFormSubmitListener-contentPanel-contentComponent-kmd~tabs-panel-salesPanelBody-addSaleLineForm"></form>
@@ -186,53 +149,5 @@ func TestParseKMDINFBSection(t *testing.T) {
 	}
 	if rows.Rows[0].InvoiceNumber != "INV-123" {
 		t.Fatalf("unexpected row: %+v", rows.Rows[0])
-	}
-}
-
-func TestMergeINFARowsNoChange(t *testing.T) {
-	existing := []KMDINFARow{{
-		PartnerCode: "10000000", PartnerName: "EXAMPLE CUSTOMER OÜ", InvoiceNumber: "INV-2026-001", InvoiceDate: "27.02.2026", InvoiceSum: "6 471,00", TaxRate: "24%", SumForRateInPeriod: "6 471,00",
-	}}
-
-	merged, changed, err := mergeINFARows(existing, existing)
-	if err != nil {
-		t.Fatalf("mergeINFARows returned error: %v", err)
-	}
-	if changed {
-		t.Fatal("expected changed to be false")
-	}
-	if len(merged) != 1 {
-		t.Fatalf("unexpected merged rows: %+v", merged)
-	}
-}
-
-func TestMergeINFARowsAmbiguous(t *testing.T) {
-	existing := []KMDINFARow{
-		{PartnerCode: "10000000", InvoiceNumber: "A"},
-		{PartnerCode: "10000000", InvoiceNumber: "A"},
-	}
-	_, _, err := mergeINFARows(existing, []KMDINFARow{{PartnerCode: "10000000", InvoiceNumber: "A"}})
-	if err == nil {
-		t.Fatal("expected ambiguity error")
-	}
-}
-
-func TestMergeINFBRowsUpdatesExistingMatch(t *testing.T) {
-	existing := []KMDINFBRow{{
-		PartnerCode: "10000001", PartnerName: "Old", InvoiceNumber: "INV-123", InvoiceDate: "15.03.2026", InvoiceSumVAT: "124,00", VATInPeriod: "24,00",
-	}}
-	patch := []KMDINFBRow{{
-		PartnerCode: "10000001", PartnerName: "New", InvoiceNumber: "INV-123", InvoiceDate: "15.03.2026", InvoiceSumVAT: "248,00", VATInPeriod: "48,00",
-	}}
-
-	merged, changed, err := mergeINFBRows(existing, patch)
-	if err != nil {
-		t.Fatalf("mergeINFBRows returned error: %v", err)
-	}
-	if !changed {
-		t.Fatal("expected changed to be true")
-	}
-	if len(merged) != 1 || merged[0].PartnerName != "New" || merged[0].VATInPeriod != "48,00" {
-		t.Fatalf("unexpected merged rows: %+v", merged)
 	}
 }

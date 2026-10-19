@@ -57,6 +57,7 @@ Get the declaration ID from `tsd list`.
 - Login is interactive (Smart-ID QR code) — ask the user to scan when running `login`
 - If you get "session expired", the user needs to run `login` again
 - Do not hardcode company/person names
-- KMD commands live under `emta-cli kmd ...`
+- KMD is XML-only: `kmd xml build|import`, `kmd verify` (see README). Never upload CSV or hand-made files to KMD.
+- A KMD draft counts as filled only when `kmd xml import` / `kmd verify` exits 0 — HTTP success is not proof
 - TSD XML create/import uses the declarations page file-import workflow
-- `kmd submit` exists but should be treated as high-risk and only used when explicitly requested
+- `kmd submit` / `tsd submit` require `EMTA_ALLOW_SUBMIT=1` set by the human operator; agents must not set it

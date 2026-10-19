@@ -124,8 +124,8 @@ func newTSDCommand() *cobra.Command {
 			if submitDeclarationID == "" {
 				return fmt.Errorf("--declaration-id is required")
 			}
-			if !submitConfirm {
-				return fmt.Errorf("--confirm is required for submit")
+			if err := requireSubmitPermission(submitConfirm); err != nil {
+				return err
 			}
 
 			client, err := loadEMTAClient()

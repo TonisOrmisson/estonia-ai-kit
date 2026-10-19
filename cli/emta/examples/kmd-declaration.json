@@ -1,0 +1,24 @@
+{
+  "tax_payer_reg_code": "11234567",
+  "year": 2026,
+  "month": 9,
+  "main": {
+    "line_1": "10000.00",
+    "line_5": "300.00",
+    "line_6": "500.00",
+    "line_6_1": "400.00",
+    "line_7": "50.00"
+  },
+  "inf_a": [
+    {
+      "partner_code": "10000000",
+      "partner_name": "Example AS",
+      "invoice_number": "INV-1",
+      "invoice_date": "2026-09-30",
+      "invoice_sum": "10000.00",
+      "tax_rate": "24",
+      "sum_for_rate_in_period": "10000.00"
+    }
+  ],
+  "inf_b": []
+}

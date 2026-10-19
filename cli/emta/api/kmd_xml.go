@@ -366,7 +366,7 @@ func (c *Client) ImportKMDXML(declarationID string, in *KMDDeclarationInput) (*X
 		return nil, err
 	}
 
-	after, err := c.openKMDDeclaration(declarationID)
+	after, err := c.waitKMDDeclaration(declarationID, in.Year, in.Month)
 	if err != nil {
 		return nil, fmt.Errorf("kmd upload sent but result could not be checked: %w", err)
 	}
@@ -385,6 +385,31 @@ func (c *Client) ImportKMDXML(declarationID string, in *KMDDeclarationInput) (*X
 	}
 	result.RawRedirect = fileName
 	return result, nil
+}
+
+var kmdProcessingPoll = 3 * time.Second
+
+// waitKMDDeclaration waits until EMTA has processed the upload queue: while a
+// file is processed the draft is listed under another status, and upload
+// errors appear only afterwards.
+func (c *Client) waitKMDDeclaration(declarationID string, year, month int) (*kmdPage, error) {
+	var last string
+	for i := 0; i < 40; i++ {
+		page, err := c.openKMDDeclaration(declarationID)
+		if err == nil {
+			return page, nil
+		}
+		last = err.Error()
+		if items, listErr := c.ListKMDDeclarations(); listErr == nil {
+			for _, item := range items {
+				if item.Year == year && item.Month == month {
+					last += fmt.Sprintf("; listed as %q", item.Status)
+				}
+			}
+		}
+		time.Sleep(kmdProcessingPoll)
+	}
+	return nil, fmt.Errorf("declaration not back in list after %s: %s", 40*kmdProcessingPoll, last)
 }
 
 // KMDVerifyResult compares a live draft against the expected input.

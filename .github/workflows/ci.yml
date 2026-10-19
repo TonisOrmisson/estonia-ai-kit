@@ -41,7 +41,14 @@ jobs:
         run: npx nx affected --target=lint --base=origin/main --parallel=3
 
       - name: Format check
-        run: npx prettier --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+        run: |
+          mapfile -t files < <(git diff --name-only --diff-filter=ACMR origin/main...HEAD -- \
+            '*.ts' '*.tsx' '*.js' '*.jsx' '*.json' '*.md' '*.yml' '*.yaml')
+          if ((${#files[@]} == 0)); then
+            echo "No format-checked files changed."
+            exit 0
+          fi
+          npx prettier --check "${files[@]}"
 
   test:
     name: Test

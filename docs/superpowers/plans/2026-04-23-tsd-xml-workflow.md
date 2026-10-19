@@ -13,6 +13,7 @@
 ### Task 1: Split TSD CLI Wiring Out of `cmd/root.go`
 
 **Files:**
+
 - Create: `cli/emta/cmd/tsd.go`
 - Modify: `cli/emta/cmd/root.go`
 - Modify: `cli/emta/cmd/root_test.go`
@@ -191,6 +192,7 @@ git commit -m "refactor(emta): split tsd commands from root wiring"
 ### Task 2: Add Shared XML Workflow Primitives
 
 **Files:**
+
 - Create: `cli/emta/api/xml_workflow.go`
 - Create: `cli/emta/api/xml_workflow_test.go`
 - Create: `cli/emta/testdata/tsd/.gitkeep`
@@ -466,6 +468,7 @@ git commit -m "feat(emta): add shared xml workflow primitives"
 ### Task 3: Implement TSD XML Export
 
 **Files:**
+
 - Create: `cli/emta/api/tsd_xml.go`
 - Create: `cli/emta/api/tsd_xml_test.go`
 - Modify: `cli/emta/cmd/tsd.go`
@@ -655,6 +658,7 @@ git commit -m "feat(emta): add tsd xml export command"
 ### Task 4: Implement TSD XML Import Into a New Draft
 
 **Files:**
+
 - Modify: `cli/emta/api/tsd_xml.go`
 - Modify: `cli/emta/api/tsd_xml_test.go`
 - Modify: `cli/emta/cmd/tsd.go`
@@ -877,6 +881,7 @@ git commit -m "feat(emta): add tsd xml import workflow"
 ### Task 5: Implement TSD Submit From Draft ID
 
 **Files:**
+
 - Modify: `cli/emta/api/tsd_xml.go`
 - Modify: `cli/emta/api/tsd_xml_test.go`
 - Modify: `cli/emta/cmd/tsd.go`
@@ -1054,6 +1059,7 @@ git commit -m "feat(emta): add tsd submit workflow"
 ### Task 6: Document the XML Workflow and Leave KMD Migration Hooks
 
 **Files:**
+
 - Modify: `cli/emta/README.md`
 - Modify: `cli/emta/CLAUDE.md`
 - Modify: `cli/emta/api/kmd.go`
@@ -1061,12 +1067,13 @@ git commit -m "feat(emta): add tsd submit workflow"
 
 - [ ] **Step 1: Add README command documentation for TSD XML**
 
-```md
+````md
 ### TSD XML Export
 
 ```sh
 ./emta-cli tsd xml export --declaration-id <id> --output tsd.xml
 ```
+````
 
 ### TSD XML Import Into New Draft
 
@@ -1085,7 +1092,8 @@ git commit -m "feat(emta): add tsd submit workflow"
 ```sh
 ./emta-cli tsd submit --declaration-id <id> --confirm
 ```
-```
+
+````
 
 - [ ] **Step 2: Update CLI guidance in `CLAUDE.md`**
 
@@ -1094,7 +1102,7 @@ git commit -m "feat(emta): add tsd submit workflow"
 
 ```sh
 ./emta-cli tsd xml export --declaration-id <id> --output tsd.xml
-```
+````
 
 ### Import TSD XML
 
@@ -1108,13 +1116,14 @@ git commit -m "feat(emta): add tsd submit workflow"
 ```sh
 ./emta-cli tsd submit --declaration-id <id> --confirm
 ```
-```
+
+````
 
 - [ ] **Step 3: Add a no-op marker in `api/kmd.go` to point later migration at shared XML workflow**
 
 ```go
 // KMD XML migration should reuse xml_workflow.go once TSD XML is stable.
-```
+````
 
 - [ ] **Step 4: Run tests and smoke the CLI help output**
 
@@ -1142,6 +1151,7 @@ git commit -m "docs(emta): document tsd xml workflow"
 ### Task 7: Manual Real-Session Smoke Validation
 
 **Files:**
+
 - Modify: `cli/emta/README.md`
 - Create: `cli/emta/testdata/tsd/README.md`
 - Test: real EMTA session, no committed secrets

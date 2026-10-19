@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -198,6 +199,7 @@ func (c *Client) CreateTSDDraftFromXML(year, month int, fileName string, xmlByte
 	req.Header.Set("Origin", baseURL)
 	req.Header.Set("Referer", pageURL)
 	c.setAuthHeaders(req)
+	csrfInfo := setCSRFHeaders(req, string(body), c.session.Client.Jar)
 
 	resp, err := c.session.Client.Do(req)
 	if err != nil {
@@ -207,7 +209,7 @@ func (c *Client) CreateTSDDraftFromXML(year, month int, fileName string, xmlByte
 	raw, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("xml import failed (%d): %s", resp.StatusCode, string(raw))
+		return nil, fmt.Errorf("xml import failed (%d, csrf: %s): %s", resp.StatusCode, csrfInfo, string(raw))
 	}
 
 	var importResp tsdImportResponse
@@ -319,4 +321,28 @@ func (c *Client) SubmitTSD(declarationID string) (*XMLImportResult, error) {
 		ActionURL:     resolveAppURL(pageURL, action.FormAction),
 		Messages:      parseFeedbackMessages(string(raw)),
 	}, nil
+}
+
+// setCSRFHeaders copies a Spring Security CSRF token from the page meta tags
+// or the XSRF-TOKEN cookie onto the request; returns which source was used.
+func setCSRFHeaders(req *http.Request, page string, jar http.CookieJar) string {
+	token := regexp.MustCompile(`name="_csrf"\s+content="([^"]+)"`).FindStringSubmatch(page)
+	header := regexp.MustCompile(`name="_csrf_header"\s+content="([^"]+)"`).FindStringSubmatch(page)
+	if len(token) == 2 {
+		name := "X-CSRF-TOKEN"
+		if len(header) == 2 {
+			name = header[1]
+		}
+		req.Header.Set(name, token[1])
+		return "meta:" + name
+	}
+	if jar != nil {
+		for _, ck := range jar.Cookies(req.URL) {
+			if strings.EqualFold(ck.Name, "XSRF-TOKEN") {
+				req.Header.Set("X-XSRF-TOKEN", ck.Value)
+				return "cookie"
+			}
+		}
+	}
+	return "none"
 }

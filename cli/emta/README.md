@@ -91,7 +91,16 @@ The former TSD appendices 1 and 2 were replaced by the separate payments view. F
 
 See `examples/tsd-payroll.json` for the input format. Import the CSV in e-MTA under **Väljamaksed → Veel tegevusi → Impordi CSV failist**, after selecting the matching taxpayer and period. The taxpayer and period are not embedded in the CSV: check both before importing. The file contains monthly aggregates, so EMTA uses the last day of the month as the payment date; do not combine payments when a mid-month change would affect taxation. The transitional CSV can be imported until the end of 2027; it does not support non-resident payments or other appendix 1 sections. Tax amounts are calculated by EMTA on import: verify the resulting payments and tax amounts before submitting. This command does not upload or submit anything.
 
-For periods from October 2026, `tsd xml import` rejects legacy appendix 1/2 data; the existing XML workflow remains available for other TSD appendices. The new XBRL GL payment format and automated payments import are not implemented.
+For periods from October 2026, `tsd xml import` rejects legacy appendix 1/2 data; the existing XML workflow remains available for other TSD appendices (6, 7, INF1). The new XBRL GL payment format is not implemented.
+
+Upload the same payroll JSON straight into a draft's payments view (the CLI checks that the draft's taxpayer and period match the JSON, builds the CSV, uploads it and reads the payments back):
+
+```sh
+./emta-cli tsd payments list --declaration-id <id>
+./emta-cli tsd payments upload --declaration-id <id> --input payroll.json
+```
+
+Uploading twice adds the payments twice: run `list` first. EMTA may answer 429 under load; the CLI retries for a few minutes.
 
 ### Submit TSD Draft
 

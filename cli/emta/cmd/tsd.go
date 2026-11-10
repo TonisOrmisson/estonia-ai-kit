@@ -19,7 +19,7 @@ func newTSDCommand() *cobra.Command {
 		Short: "Income and social tax return (TSD) operations",
 	}
 
-	tsdCmd.AddCommand(newTSDXMLCommand(), newTSDCSVCommand())
+	tsdCmd.AddCommand(newTSDXMLCommand(), newTSDCSVCommand(), newTSDPaymentsCommand())
 
 	var submitDeclarationID string
 	var submitConfirm bool
@@ -267,5 +267,64 @@ func newTSDCSVCommand() *cobra.Command {
 	build.Flags().StringVar(&input, "input", "", "Path to payroll JSON input")
 	build.Flags().StringVar(&output, "output", "", "Path to new CSV file")
 	command.AddCommand(build)
+	return command
+}
+
+// newTSDPaymentsCommand uploads and reads appendix 1 payments in the payments view (periods from 2026-10).
+func newTSDPaymentsCommand() *cobra.Command {
+	command := &cobra.Command{Use: "payments", Short: "TSD payments view (appendix 1 from 2026-10)"}
+	var declarationID, input string
+	upload := &cobra.Command{Use: "upload", Short: "Upload payroll JSON as transitional CSV into a TSD draft, then read payments back", RunE: func(cmd *cobra.Command, args []string) error {
+		if declarationID == "" || input == "" {
+			return fmt.Errorf("--declaration-id and --input are required")
+		}
+		data, err := os.ReadFile(input)
+		if err != nil {
+			return err
+		}
+		in, err := api.ParseTSDPayrollCSVInput(data)
+		if err != nil {
+			return err
+		}
+		csv, err := api.BuildTSDPayrollCSV(in)
+		if err != nil {
+			return err
+		}
+		session, err := loadSession()
+		if err != nil {
+			return err
+		}
+		client := api.NewClient(session)
+		if err := client.CheckTSDDraftOwner(declarationID, in.TaxPayerRegCode, in.Year, in.Month); err != nil {
+			return err
+		}
+		uploaded, err := client.UploadTSDPaymentsCSV(declarationID, fmt.Sprintf("tsd-%d-%02d.csv", in.Year, in.Month), csv)
+		if err != nil {
+			return err
+		}
+		readback, err := client.ReadTSDPayments(declarationID)
+		if err != nil {
+			return fmt.Errorf("uploaded, but readback failed: %w", err)
+		}
+		return printJSON(map[string]any{"declaration_id": declarationID, "upload": uploaded, "readback": readback})
+	}}
+	upload.Flags().StringVar(&declarationID, "declaration-id", "", "Declaration id from tsd list")
+	upload.Flags().StringVar(&input, "input", "", "Path to payroll JSON input (same format as csv build)")
+	list := &cobra.Command{Use: "list", Short: "Read payments and summary live from the payments view", RunE: func(cmd *cobra.Command, args []string) error {
+		if declarationID == "" {
+			return fmt.Errorf("--declaration-id is required")
+		}
+		session, err := loadSession()
+		if err != nil {
+			return err
+		}
+		readback, err := api.NewClient(session).ReadTSDPayments(declarationID)
+		if err != nil {
+			return err
+		}
+		return printJSON(readback)
+	}}
+	list.Flags().StringVar(&declarationID, "declaration-id", "", "Declaration id from tsd list")
+	command.AddCommand(upload, list)
 	return command
 }

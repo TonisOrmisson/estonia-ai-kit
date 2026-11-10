@@ -8,6 +8,7 @@
       "name": "Example Person",
       "payment_type": "10",
       "amount": "1000.00",
+      "social_tax_base": "1000.00",
       "allowance_610": "700.00"
     }
   ]

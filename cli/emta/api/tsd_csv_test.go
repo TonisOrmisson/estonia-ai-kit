@@ -8,7 +8,7 @@ import (
 )
 
 func TestBuildTSDPayrollCSV(t *testing.T) {
-	in := &TSDPayrollCSVInput{TaxPayerRegCode: "12345678", Year: 2026, Month: 10, Payments: []TSDPayrollCSVRow{{PersonCode: "12345678901", Name: "Example Person", PaymentType: "10", Amount: "1200.5", Allowance610: "700"}}}
+	in := &TSDPayrollCSVInput{TaxPayerRegCode: "12345678", Year: 2026, Month: 10, Payments: []TSDPayrollCSVRow{{PersonCode: "12345678901", Name: "Example Person", PaymentType: "10", Amount: "1200.5", SocialTaxBase: "1200.5", Allowance610: "700"}}}
 	data, err := BuildTSDPayrollCSV(in)
 	if err != nil {
 		t.Fatal(err)
@@ -22,7 +22,7 @@ func TestBuildTSDPayrollCSV(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 2 || len(rows[1]) != 18 || rows[1][0] != "12345678901" || rows[1][3] != "1200,50" || rows[1][15] != "700,00" || rows[1][9] != "" {
+	if len(rows) != 2 || len(rows[1]) != 18 || rows[1][0] != "12345678901" || rows[1][3] != "1200,50" || rows[1][5] != "1200,50" || rows[1][15] != "700,00" || rows[1][9] != "" {
 		t.Fatalf("unexpected records: %v", rows)
 	}
 }

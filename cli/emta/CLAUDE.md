@@ -59,5 +59,5 @@ Get the declaration ID from `tsd list`.
 - Do not hardcode company/person names
 - KMD is XML-only: `kmd xml build|import`, `kmd verify` (see README). Never upload CSV or hand-made files to KMD.
 - A KMD draft counts as filled only when `kmd xml import` / `kmd verify` exits 0 — HTTP success is not proof
-- TSD XML create/import uses the declarations page file-import workflow
+- TSD XML create/import uses the declarations page file-import workflow; from period 2026-10 appendix 1/2 go through `tsd payments upload|list|delete|feedback` (payments view), salary rows need `social_tax_base`
 - `kmd submit` / `tsd submit` require `EMTA_ALLOW_SUBMIT=1` set by the human operator; agents must not set it

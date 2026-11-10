@@ -93,14 +93,20 @@ See `examples/tsd-payroll.json` for the input format. Import the CSV in e-MTA un
 
 For periods from October 2026, `tsd xml import` rejects legacy appendix 1/2 data; the existing XML workflow remains available for other TSD appendices (6, 7, INF1). The new XBRL GL payment format is not implemented.
 
+For payment type 10 (salary) set `social_tax_base` (CSV column 1060, normally equal to `amount`); without it EMTA calculates no social tax and flags the row (`KR_SM_01`).
+
 Upload the same payroll JSON straight into a draft's payments view (the CLI checks that the draft's taxpayer and period match the JSON, builds the CSV, uploads it and reads the payments back):
 
 ```sh
 ./emta-cli tsd payments list --declaration-id <id>
 ./emta-cli tsd payments upload --declaration-id <id> --input payroll.json
+./emta-cli tsd payments feedback --file-id <file id from list.files>
+./emta-cli tsd payments delete --declaration-id <id> --payment-id <payment id from list>
 ```
 
-Uploading twice adds the payments twice: run `list` first. EMTA may answer 429 under load; the CLI retries for a few minutes.
+EMTA processes the file asynchronously: check `list` (rows, file `validationStatus`) and `tsd xml export` before submitting.
+
+Uploading twice adds the payments twice: run `list` first and delete a wrong row instead of re-uploading everything. EMTA may answer 429 under load; the CLI retries for a few minutes.
 
 ### Submit TSD Draft
 

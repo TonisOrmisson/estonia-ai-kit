@@ -325,6 +325,39 @@ func newTSDPaymentsCommand() *cobra.Command {
 		return printJSON(readback)
 	}}
 	list.Flags().StringVar(&declarationID, "declaration-id", "", "Declaration id from tsd list")
-	command.AddCommand(upload, list)
+	var paymentID string
+	del := &cobra.Command{Use: "delete", Short: "Delete one payment row from a TSD draft", RunE: func(cmd *cobra.Command, args []string) error {
+		if declarationID == "" || paymentID == "" {
+			return fmt.Errorf("--declaration-id and --payment-id are required")
+		}
+		session, err := loadSession()
+		if err != nil {
+			return err
+		}
+		if err := api.NewClient(session).DeleteTSDPayment(declarationID, paymentID); err != nil {
+			return err
+		}
+		return printJSON(map[string]any{"declaration_id": declarationID, "deleted_payment_id": paymentID})
+	}}
+	del.Flags().StringVar(&declarationID, "declaration-id", "", "Declaration id from tsd list")
+	del.Flags().StringVar(&paymentID, "payment-id", "", "Payment id from tsd payments list")
+	var fileID string
+	feedback := &cobra.Command{Use: "feedback", Short: "Download EMTA validation feedback for an uploaded payments file (id from list.files)", RunE: func(cmd *cobra.Command, args []string) error {
+		if fileID == "" {
+			return fmt.Errorf("--file-id is required")
+		}
+		session, err := loadSession()
+		if err != nil {
+			return err
+		}
+		data, err := api.NewClient(session).DownloadTSDPaymentsFeedback(fileID)
+		if err != nil {
+			return err
+		}
+		_, err = os.Stdout.Write(data)
+		return err
+	}}
+	feedback.Flags().StringVar(&fileID, "file-id", "", "Uploaded file id from tsd payments list")
+	command.AddCommand(upload, list, del, feedback)
 	return command
 }

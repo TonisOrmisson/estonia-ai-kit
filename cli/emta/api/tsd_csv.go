@@ -24,6 +24,7 @@ type TSDPayrollCSVRow struct {
 	Name                     string `json:"name"`
 	PaymentType              string `json:"payment_type"`
 	Amount                   string `json:"amount"`
+	SocialTaxBase            string `json:"social_tax_base,omitempty"` // column 1060; empty means EMTA calculates no social tax
 	A1Country                string `json:"a1_country,omitempty"`
 	StateSocialTaxDeduction  string `json:"state_social_tax_deduction,omitempty"`
 	PriorSocialTaxDeduction  string `json:"prior_social_tax_deduction,omitempty"`
@@ -83,7 +84,7 @@ func BuildTSDPayrollCSV(in *TSDPayrollCSVInput) ([]byte, error) {
 		if p.A1Country != "" && !tsdCountryRe.MatchString(p.A1Country) {
 			return nil, fmt.Errorf("payment %d: a1_country must be a two-letter country code", i+1)
 		}
-		amounts := []string{p.Amount, p.StateSocialTaxDeduction, p.PriorSocialTaxDeduction, p.MinimumSocialTaxIncrease, p.Allowance610, p.Allowance640, p.Allowance650}
+		amounts := []string{p.Amount, p.SocialTaxBase, p.StateSocialTaxDeduction, p.PriorSocialTaxDeduction, p.MinimumSocialTaxIncrease, p.Allowance610, p.Allowance640, p.Allowance650}
 		for j, value := range amounts {
 			n, err := normAmount(value)
 			if err != nil || (j == 0 && n == "") || len(strings.ReplaceAll(strings.ReplaceAll(n, ".", ""), "-", "")) > 22 {
@@ -91,7 +92,7 @@ func BuildTSDPayrollCSV(in *TSDPayrollCSVInput) ([]byte, error) {
 			}
 			amounts[j] = strings.ReplaceAll(n, ".", ",")
 		}
-		fields := []string{text(p.PersonCode), text(p.Name), text(p.PaymentType), amounts[0], "", "", amounts[1], amounts[2], amounts[3], "", "", "", "", "", "", amounts[4], amounts[5], amounts[6]}
+		fields := []string{text(p.PersonCode), text(p.Name), text(p.PaymentType), amounts[0], "", amounts[1], amounts[2], amounts[3], amounts[4], "", "", "", "", "", "", amounts[5], amounts[6], amounts[7]}
 		if p.A1Country != "" {
 			fields[4] = text(p.A1Country)
 		}

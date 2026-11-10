@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -152,7 +154,34 @@ func findDraftTSDDeclarationID(items []TSDDeclaration, year, month int) string {
 	return ""
 }
 
+// rejectLegacyPayrollXML prevents importing obsolete appendix 1/2 data for the
+// new payment system. Other TSD appendices continue to use the legacy XML.
+func rejectLegacyPayrollXML(year, month int, data []byte) error {
+	if year*100+month < 202610 {
+		return nil
+	}
+	decoder := xml.NewDecoder(bytes.NewReader(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))))
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("tsd xml: invalid XML: %w", err)
+		}
+		if start, ok := token.(xml.StartElement); ok {
+			name := strings.ToLower(start.Name.Local)
+			if strings.HasPrefix(name, "tsd_l1_") || strings.HasPrefix(name, "tsd_l2_") {
+				return fmt.Errorf("tsd xml: legacy appendix 1/2 is unsupported from October 2026; use the new payments view or transitional CSV")
+			}
+		}
+	}
+}
+
 func (c *Client) CreateTSDDraftFromXML(year, month int, fileName string, xmlBytes []byte, withSums bool) (*XMLImportResult, error) {
+	if err := rejectLegacyPayrollXML(year, month, xmlBytes); err != nil {
+		return nil, err
+	}
 	if err := c.ensureSession(); err != nil {
 		return nil, err
 	}

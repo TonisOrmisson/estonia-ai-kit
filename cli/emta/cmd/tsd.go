@@ -19,7 +19,7 @@ func newTSDCommand() *cobra.Command {
 		Short: "Income and social tax return (TSD) operations",
 	}
 
-	tsdCmd.AddCommand(newTSDXMLCommand())
+	tsdCmd.AddCommand(newTSDXMLCommand(), newTSDCSVCommand())
 
 	var submitDeclarationID string
 	var submitConfirm bool
@@ -227,4 +227,45 @@ func newTSDXMLCommand() *cobra.Command {
 
 	tsdXMLCmd.AddCommand(exportCmd, importCmd)
 	return tsdXMLCmd
+}
+
+// newTSDCSVCommand builds the transitional payment CSV without contacting EMTA.
+func newTSDCSVCommand() *cobra.Command {
+	command := &cobra.Command{Use: "csv", Short: "Transitional resident payroll CSV"}
+	var input, output string
+	build := &cobra.Command{Use: "build", Short: "Build appendix 1 payroll CSV from JSON", RunE: func(cmd *cobra.Command, args []string) error {
+		if input == "" || output == "" {
+			return fmt.Errorf("--input and --output are required")
+		}
+		data, err := os.ReadFile(input)
+		if err != nil {
+			return err
+		}
+		in, err := api.ParseTSDPayrollCSVInput(data)
+		if err != nil {
+			return err
+		}
+		csv, err := api.BuildTSDPayrollCSV(in)
+		if err != nil {
+			return err
+		}
+		file, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			return err
+		}
+		if _, err = file.Write(csv); err != nil {
+			file.Close()
+			os.Remove(output)
+			return err
+		}
+		if err = file.Close(); err != nil {
+			os.Remove(output)
+			return err
+		}
+		return printJSON(map[string]any{"tax_payer_reg_code": in.TaxPayerRegCode, "year": in.Year, "month": in.Month, "payments": len(in.Payments), "output": output})
+	}}
+	build.Flags().StringVar(&input, "input", "", "Path to payroll JSON input")
+	build.Flags().StringVar(&output, "output", "", "Path to new CSV file")
+	command.AddCommand(build)
+	return command
 }

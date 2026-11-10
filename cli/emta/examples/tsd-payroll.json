@@ -1,0 +1,14 @@
+{
+  "tax_payer_reg_code": "12345678",
+  "year": 2026,
+  "month": 10,
+  "payments": [
+    {
+      "person_code": "12345678901",
+      "name": "Example Person",
+      "payment_type": "10",
+      "amount": "1000.00",
+      "allowance_610": "700.00"
+    }
+  ]
+}
